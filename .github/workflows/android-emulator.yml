@@ -19,7 +19,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpulse0 libgl1-mesa-glx
+          sudo apt-get install -y libpulse0 libgl1
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
           
@@ -46,26 +46,36 @@ jobs:
             
             # Get URL
             TUNNEL_URL=$(grep -oP 'https://.*?.trycloudflare.com' cf.log | head -1)
+            HOST=$(echo $TUNNEL_URL | sed 's|https://||' | sed 's|/.*||')
             
             echo ""
             echo "=========================================="
             echo "=========================================="
             echo "✅ ANDROID EMULATOR READY!"
             echo ""
-            echo "📱 Connect with scrcpy from PC:"
+            echo "📱 ROOT ACCESS: ENABLED"
+            echo "💾 RAM: 4GB"
+            echo "⚡ KVM: ENABLED"
             echo ""
-            HOST=$(echo $TUNNEL_URL | sed 's|https://||' | sed 's|/.*||')
-            echo "scrcpy --tcpip=$HOST:443 -b2M -m1024"
+            echo "🔗 CONNECTION INFO:"
+            echo "   Host: $HOST"
+            echo "   Port: 443"
             echo ""
-            echo "🔗 Cloudflare URL: $TUNNEL_URL"
+            echo "📱 CONNECT FROM PC:"
+            echo "   scrcpy --tcpip=$HOST:443 -b2M -m1024"
+            echo ""
+            echo "📱 CONNECT FROM ANDROID (Termux):"
+            echo "   pkg install scrcpy"
+            echo "   scrcpy --tcpip=$HOST:443 -b1M -m800"
+            echo ""
             echo "=========================================="
             echo "=========================================="
             echo ""
             
-            # Keep alive
+            # Keep alive with status updates
             for i in {1..360}; do
-              if [ $((i % 10)) -eq 0 ]; then
-                echo "[$i min] Emulator Active | URL: $HOST:443"
+              if [ $((i % 5)) -eq 0 ]; then
+                echo "[$(date +%H:%M)] [$i min] ✅ Active | URL: $HOST:443"
               fi
               adb shell "date" > /dev/null 2>&1
               sleep 60
