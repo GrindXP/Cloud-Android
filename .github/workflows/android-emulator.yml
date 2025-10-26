@@ -1,4 +1,4 @@
-name: Android Browser Access
+name: Android Cloud
 on:
   workflow_dispatch:
 
@@ -23,6 +23,40 @@ jobs:
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
           sudo dpkg -i cloudflared-linux-amd64.deb
           
+      - name: Create Keep Alive Script
+        run: |
+          cat > keep_alive.sh << 'EOF'
+          #!/bin/bash
+          TUNNEL_URL=$(grep -oP 'https://.*?.trycloudflare.com' cf.log | head -1)
+          HOST=$(echo "$TUNNEL_URL" | sed 's|https://||' | sed 's|/.*||')
+          
+          echo ""
+          echo "=========================================="
+          echo "✅ ANDROID EMULATOR READY!"
+          echo "📱 ROOT: ENABLED | 💾 RAM: 4GB | ⚡ KVM: ENABLED"
+          echo ""
+          echo "🔗 CONNECTION URL:"
+          echo "   $TUNNEL_URL"
+          echo ""
+          echo "📱 CONNECT WITH:"
+          echo "   scrcpy --tcpip=$HOST:443 -b2M -m1024"
+          echo "=========================================="
+          cat cf.log
+          echo "=========================================="
+          
+          i=1
+          while [ $i -le 360 ]; do
+            if [ $((i % 5)) -eq 0 ]; then
+              echo "[$(date +%H:%M:%S)] [$i min] ✅ Active | $HOST:443"
+            fi
+            adb shell "date" > /dev/null 2>&1 || true
+            sleep 60
+            i=$((i + 1))
+          done
+          echo "✅ 6 hours completed!"
+          EOF
+          chmod +x keep_alive.sh
+          
       - name: Run Android Emulator  
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -39,51 +73,6 @@ jobs:
             sleep 2
             adb tcpip 5555
             sleep 3
-            
-            # Start Cloudflare tunnel
             cloudflared tunnel --url tcp://localhost:5555 > cf.log 2>&1 &
             sleep 20
-            
-            # Get URL and extract host
-            TUNNEL_URL=$(grep -oP 'https://.*?.trycloudflare.com' cf.log | head -1)
-            HOST=$(echo "$TUNNEL_URL" | sed 's|https://||' | sed 's|/.*||')
-            
-            echo ""
-            echo "=========================================="
-            echo "=========================================="
-            echo "✅ ANDROID EMULATOR READY!"
-            echo ""
-            echo "📱 ROOT ACCESS: ENABLED"
-            echo "💾 RAM: 4GB"
-            echo "⚡ KVM: ENABLED"
-            echo ""
-            echo "🔗 CONNECTION INFO:"
-            echo "   Full URL: $TUNNEL_URL"
-            echo "   Host: $HOST"
-            echo "   Port: 443"
-            echo ""
-            echo "📱 CONNECT FROM PC:"
-            echo "   scrcpy --tcpip=$HOST:443 -b2M -m1024"
-            echo ""
-            echo "📱 CONNECT FROM ANDROID (Termux):"
-            echo "   pkg install scrcpy"
-            echo "   scrcpy --tcpip=$HOST:443 -b1M -m800"
-            echo ""
-            echo "=========================================="
-            echo "Cloudflare Log Contents:"
-            cat cf.log
-            echo "=========================================="
-            echo ""
-            
-            # Keep alive loop - properly formatted
-            i=1
-            while [ $i -le 360 ]; do
-              if [ $((i % 5)) -eq 0 ]; then
-                echo "[$(date +%H:%M:%S)] [$i min] ✅ Active | Host: $HOST:443"
-              fi
-              adb shell "date" > /dev/null 2>&1 || echo "ADB connection check"
-              sleep 60
-              i=$((i + 1))
-            done
-            
-            echo "✅ 6 hours completed! Workflow ending."
+            bash keep_alive.sh
