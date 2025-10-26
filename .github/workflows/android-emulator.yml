@@ -1,4 +1,4 @@
-name: Android ngrok
+name: Android Cloud Final
 on:
   workflow_dispatch:
 
@@ -20,60 +20,29 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libpulse0 libgl1
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
           
-          # Download ngrok
-          wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
-          tar xzf ngrok-v3-stable-linux-amd64.tgz
-          
-          # Authenticate with YOUR token
-          ./ngrok authtoken 34bu700ATDFmwOazDaKvfnkt6mU_ubybviWdfZ7njs4WHVFC
-          
-      - name: Create Keep Alive Script
+      - name: Create Script
         run: |
           cat > keep_alive.sh << 'EOF'
           #!/bin/bash
-          
-          # Wait for ngrok API
-          sleep 10
-          
-          # Get ngrok URL
-          NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -o '"public_url":"tcp://[^"]*' | cut -d'"' -f4 | head -1)
-          HOST=$(echo $NGROK_URL | sed 's|tcp://||' | cut -d':' -f1)
-          PORT=$(echo $NGROK_URL | sed 's|tcp://||' | cut -d':' -f2)
+          TUNNEL_URL=$(grep -oP 'https://.*?.trycloudflare.com' cf.log | head -1)
+          HOST=$(echo "$TUNNEL_URL" | sed 's|https://||')
           
           echo ""
-          echo "=========================================="
-          echo "✅ ANDROID EMULATOR READY!"
-          echo "📱 ROOT: ENABLED | 💾 RAM: 4GB | ⚡ KVM: ENABLED"
+          echo "🔗 URL: $TUNNEL_URL"
+          echo "📱 Host: $HOST:443"
           echo ""
-          echo "🔗 CONNECTION INFO:"
-          echo "   Host: $HOST"
-          echo "   Port: $PORT"
-          echo "   Full: $NGROK_URL"
-          echo ""
-          echo "📱 CONNECT FROM TERMUX:"
-          echo "   adb connect $HOST:$PORT"
-          echo "   scrcpy -b1M -m800"
-          echo ""
-          echo "📱 CONNECT FROM PC:"
-          echo "   scrcpy --tcpip=$HOST:$PORT -b2M -m1024"
-          echo "=========================================="
           
-          # Keep alive
-          i=1
-          while [ $i -le 360 ]; do
-            if [ $((i % 5)) -eq 0 ]; then
-              echo "[$(date +%H:%M:%S)] [$i min] ✅ Active | $HOST:$PORT"
-            fi
-            adb shell "date" > /dev/null 2>&1 || true
+          for i in {1..360}; do
+            [ $((i % 10)) -eq 0 ] && echo "[$i min] Active"
             sleep 60
-            i=$((i + 1))
           done
-          echo "✅ 6 hours completed!"
           EOF
           chmod +x keep_alive.sh
           
-      - name: Run Android Emulator  
+      - name: Run Emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 29
@@ -89,10 +58,6 @@ jobs:
             sleep 2
             adb tcpip 5555
             sleep 3
-            
-            # Start ngrok tunnel
-            ./ngrok tcp 5555 > /dev/null &
-            sleep 5
-            
-            # Run keep alive script
+            cloudflared tunnel --url tcp://localhost:5555 > cf.log 2>&1 &
+            sleep 20
             bash keep_alive.sh
