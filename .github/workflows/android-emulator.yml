@@ -44,9 +44,9 @@ jobs:
             cloudflared tunnel --url tcp://localhost:5555 > cf.log 2>&1 &
             sleep 20
             
-            # Get URL
+            # Get URL and extract host
             TUNNEL_URL=$(grep -oP 'https://.*?.trycloudflare.com' cf.log | head -1)
-            HOST=$(echo $TUNNEL_URL | sed 's|https://||' | sed 's|/.*||')
+            HOST=$(echo "$TUNNEL_URL" | sed 's|https://||' | sed 's|/.*||')
             
             echo ""
             echo "=========================================="
@@ -58,6 +58,7 @@ jobs:
             echo "⚡ KVM: ENABLED"
             echo ""
             echo "🔗 CONNECTION INFO:"
+            echo "   Full URL: $TUNNEL_URL"
             echo "   Host: $HOST"
             echo "   Port: 443"
             echo ""
@@ -69,14 +70,20 @@ jobs:
             echo "   scrcpy --tcpip=$HOST:443 -b1M -m800"
             echo ""
             echo "=========================================="
+            echo "Cloudflare Log Contents:"
+            cat cf.log
             echo "=========================================="
             echo ""
             
-            # Keep alive with status updates
-            for i in {1..360}; do
+            # Keep alive loop - properly formatted
+            i=1
+            while [ $i -le 360 ]; do
               if [ $((i % 5)) -eq 0 ]; then
-                echo "[$(date +%H:%M)] [$i min] ✅ Active | URL: $HOST:443"
+                echo "[$(date +%H:%M:%S)] [$i min] ✅ Active | Host: $HOST:443"
               fi
-              adb shell "date" > /dev/null 2>&1
+              adb shell "date" > /dev/null 2>&1 || echo "ADB connection check"
               sleep 60
+              i=$((i + 1))
             done
+            
+            echo "✅ 6 hours completed! Workflow ending."
