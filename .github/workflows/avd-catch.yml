@@ -11,7 +11,7 @@ on:
 jobs:
   run-emulator:
     runs-on: ubuntu-latest
-    timeout-minutes: 370
+    timeout-minutes: 370  # Allow up to a 6-hour session
 
     steps:
       - name: Checkout Repository
@@ -41,7 +41,6 @@ jobs:
           sudo docker image prune --all --force
           sudo apt-get clean
 
-      # Restore cache at the start
       - name: Restore AVD Cache
         uses: actions/cache@v4
         id: avd-cache
@@ -82,8 +81,14 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -memory 6144 -cores 4 -skin 1080x2400 -writable-system
           disable-animations: true
           script: |
+            #!/bin/bash
+            set -e
             MINUTES="${{ github.event.inputs.minutes }}"
-            if [ -z "$MINUTES" ] || ! echo "$MINUTES" | grep -qE '^[0-9]+$'; then
+            # Validation & fallback
+            if [[ -z "$MINUTES" ]] || ! [[ "$MINUTES" =~ ^[0-9]+$ ]]; then
+              MINUTES=5
+            fi
+            if (( MINUTES < 1 || MINUTES > 360 )); then
               MINUTES=5
             fi
             SECONDS=$((MINUTES * 60))
@@ -95,7 +100,7 @@ jobs:
             adb remount
             adb tcpip 5555
             sleep 3
-            adb connect 127.0.0.1:5555
+            adb connect 127.0.0.1:5555 || true
             echo ""
             echo "✅ AVD Running"
             echo "⏱️ Waiting $SECONDS seconds (${MINUTES} minutes) before closing..."
