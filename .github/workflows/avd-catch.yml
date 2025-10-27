@@ -11,7 +11,7 @@ on:
 jobs:
   run-emulator:
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ github.event.inputs.minutes }}
+    timeout-minutes: 370
 
     steps:
       - name: Checkout Repository
