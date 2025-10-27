@@ -11,6 +11,11 @@ on:
         description: 'Android API level'
         required: false
         default: '34'
+        type: choice
+        options:
+          - '34'
+          - '33'
+          - '31'
 
 jobs:
   run-emulator:
@@ -26,6 +31,7 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -42,13 +48,19 @@ jobs:
           tar -xzf frp_0.58.1_linux_amd64.tar.gz
           sudo cp frp_0.58.1_linux_amd64/frpc /usr/local/bin/
           sudo chmod +x /usr/local/bin/frpc
+          frpc --version
 
       - name: Create FRP Client Configuration
         run: |
           cat > frpc.toml << 'EOF'
+          # FRP Client Configuration (TOML format)
           serverAddr = "159.195.6.61"
           serverPort = 7000
           
+          # Optional: Add authentication (uncomment if you set token on server)
+          # auth.token = "your_token_here"
+          
+          # Proxy configurations
           [[proxies]]
           name = "github-avd-adb"
           type = "tcp"
@@ -70,12 +82,16 @@ jobs:
           localPort = 27183
           remotePort = 27183
           EOF
+          
+          echo "FRP configuration created:"
+          cat frpc.toml
 
       - name: Free Up Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /opt/ghc
           sudo rm -rf /usr/local/share/boost
+          df -h
 
       - name: AVD Cache
         uses: actions/cache@v4
@@ -99,15 +115,25 @@ jobs:
           disk-size: 8192M
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
           disable-animations: true
-          script: echo "AVD snapshot created"
+          script: echo "AVD snapshot created successfully"
 
       - name: Start FRP Tunnel
         run: |
+          echo "Starting FRP tunnel to VPS 159.195.6.61:7000..."
           nohup frpc -c frpc.toml > frpc.log 2>&1 &
+          FRPC_PID=$!
+          echo $FRPC_PID > frpc.pid
+          
           sleep 5
+          
           if pgrep -x "frpc" > /dev/null; then
-            echo "✅ FRP tunnel active"
-            tail -5 frpc.log
+            echo "✅ FRP tunnel started successfully (PID: $FRPC_PID)"
+            echo "Tunnel logs:"
+            tail -20 frpc.log
+          else
+            echo "❌ FRP tunnel failed to start"
+            cat frpc.log
+            exit 1
           fi
 
       - name: Start Emulator and Keep Session Alive
@@ -130,16 +156,14 @@ jobs:
             echo "========================================="
             echo ""
             
-            # List devices
             adb devices -l
             echo ""
             
-            # Enable TCP/IP and wait for restart
+            # Enable TCP/IP
             echo "⚙️  Enabling ADB over TCP/IP..."
             adb tcpip 5555
             sleep 5
             
-            # Connect to local TCP
             adb connect 127.0.0.1:5555
             sleep 2
             
@@ -154,12 +178,14 @@ jobs:
             echo "Model: $(adb -s 127.0.0.1:5555 shell getprop ro.product.model)"
             echo ""
             
-            # Install scrcpy server
+            # Install scrcpy server (optional - continue if fails)
             echo "📦 Installing scrcpy server..."
-            SCRCPY_VERSION=2.7
-            wget -q https://github.com/Genymobile/scrcpy/releases/download/v${SCRCPY_VERSION}/scrcpy-server-v${SCRCPY_VERSION} -O scrcpy-server.jar
-            adb -s 127.0.0.1:5555 push scrcpy-server.jar /data/local/tmp/scrcpy-server.jar
-            echo "✅ scrcpy server installed"
+            if wget -q https://github.com/Genymobile/scrcpy/releases/download/v3.3.3/scrcpy-server-v3.3.3 -O scrcpy-server.jar 2>/dev/null; then
+              adb -s 127.0.0.1:5555 push scrcpy-server.jar /data/local/tmp/scrcpy-server.jar
+              echo "✅ scrcpy server installed (v3.3.3)"
+            else
+              echo "⚠️  scrcpy server download failed (optional - ADB still works)"
+            fi
             echo ""
             
             # Connection instructions
@@ -172,20 +198,19 @@ jobs:
             echo "  adb connect 159.195.6.61:5555"
             echo "  adb devices"
             echo ""
-            echo "Screen mirroring with scrcpy:"
+            echo "Basic ADB commands:"
+            echo "  adb shell                    # Open shell"
+            echo "  adb install app.apk          # Install APK"
+            echo "  adb logcat                   # View logs"
+            echo "  adb shell input text 'hello' # Input text"
+            echo ""
+            echo "Screen mirroring (if scrcpy installed on local machine):"
             echo "  scrcpy --serial 159.195.6.61:5555 --max-size 1920 --bit-rate 8M"
-            echo ""
-            echo "High quality mode:"
-            echo "  scrcpy -s 159.195.6.61:5555 --max-size 2400 --bit-rate 16M"
-            echo ""
-            echo "Low latency mode:"
-            echo "  scrcpy -s 159.195.6.61:5555 --max-size 1280 --bit-rate 4M"
             echo ""
             echo "========================================="
             echo "VPS IP: 159.195.6.61"
             echo "ADB Port: 5555"
             echo "Console Port: 5554"
-            echo "scrcpy Port: 27183"
             echo "========================================="
             echo ""
             
@@ -197,52 +222,45 @@ jobs:
             echo "⏱️  Session duration: ${DURATION_HOURS} hours"
             echo "🕐 Started at: $(date)"
             echo ""
-            echo "Monitoring loop active..."
+            echo "✅ Emulator ready! Monitoring active..."
             echo ""
             
-            # Keep-alive loop with monitoring
+            # Keep-alive loop
             ITERATION=0
             while true; do
               CURRENT_TIME=$(date +%s)
               ELAPSED=$((CURRENT_TIME - START_TIME))
               
-              # Check duration
               if [ $ELAPSED -ge $DURATION_SECONDS ]; then
                 echo ""
                 echo "✅ Session completed after ${DURATION_HOURS} hours"
                 break
               fi
               
-              # Calculate remaining time
               REMAINING=$((DURATION_SECONDS - ELAPSED))
               HOURS=$((REMAINING / 3600))
               MINUTES=$(((REMAINING % 3600) / 60))
               
-              # Status update every 60 seconds
               ITERATION=$((ITERATION + 1))
               if [ $((ITERATION % 60)) -eq 0 ]; then
-                # Check ADB connection
                 DEVICES=$(adb devices | grep -c "5555.*device" || echo "0")
                 
-                # Check FRP status
-                FRP_STATUS="❌ Stopped"
+                FRP_STATUS="❌"
                 if pgrep -x "frpc" > /dev/null; then
-                  FRP_STATUS="✅ Running"
+                  FRP_STATUS="✅"
                 else
-                  echo "⚠️  FRP stopped! Restarting..."
                   nohup frpc -c frpc.toml > frpc.log 2>&1 &
                   sleep 3
-                  FRP_STATUS="✅ Restarted"
+                  FRP_STATUS="♻️"
                 fi
                 
-                echo "[$(date '+%H:%M:%S')] ⏳ ${HOURS}h ${MINUTES}m left | 📱 ADB: ${DEVICES} | 🔗 FRP: ${FRP_STATUS}"
+                echo "[$(date '+%H:%M:%S')] ⏳ ${HOURS}h ${MINUTES}m | 📱 ${DEVICES} | 🔗 ${FRP_STATUS}"
               fi
               
               sleep 1
             done
             
-            echo ""
-            echo "Session ended at: $(date)"
+            echo "Session ended: $(date)"
 
       - name: Upload Logs
         if: always()
