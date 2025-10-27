@@ -22,7 +22,7 @@ jobs:
           wget https://github.com/fatedier/frp/releases/download/v0.58.1/frp_0.58.1_linux_amd64.tar.gz
           tar -xvzf frp_0.58.1_linux_amd64.tar.gz
           cd frp_0.58.1_linux_amd64
-          cat > frpc.ini <<EOF
+          cat > frpc.ini <<'EOFCONFIG'
 [common]
 server_addr = 159.195.6.61
 server_port = 7000
@@ -32,9 +32,9 @@ type = tcp
 local_ip = 127.0.0.1
 local_port = 5555
 remote_port = 5555
-EOF
+EOFCONFIG
 
-          nohup ./frpc -c frpc.ini &
+          nohup ./frpc -c frpc.ini > frpc.log 2>&1 &
           cd ..
 
       - name: Launch Android Emulator
@@ -53,5 +53,8 @@ EOF
             sleep 3
             adb tcpip 5555
             sleep 10
-            echo "FRP tunnel forwarding port 5555 now active."
+            echo "============================================"
+            echo "✅ Android Emulator Ready with FRP Tunnel!"
+            echo "📱 Connect using: adb connect 159.195.6.61:5555"
+            echo "============================================"
             while true; do sleep 60; done
