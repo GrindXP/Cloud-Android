@@ -1,9 +1,10 @@
-name: Android Ngrok Cloud
+name: Android Cloud with FRP
+
 on:
   workflow_dispatch:
 
 jobs:
-  android:
+  android-cloud:
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -16,44 +17,25 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Install Dependencies
+      - name: Download and configure FRP client
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libpulse0 libgl1
+          wget https://github.com/fatedier/frp/releases/download/v0.58.1/frp_0.58.1_linux_amd64.tar.gz
+          tar -xvzf frp_0.58.1_linux_amd64.tar.gz
+          cd frp_0.58.1_linux_amd64
+          cat > frpc.ini <<EOF
+[common]
+server_addr = 159.195.6.61
+server_port = 7000
 
-          # Download ngrok
-          wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
-          tar xzf ngrok-v3-stable-linux-amd64.tgz
-          ./ngrok config add-authtoken 34bu700ATDFmwOazDaKvfnkt6mU_ubybviWdfZ7njs4WHVFC
+[adb-tcp]
+type = tcp
+local_ip = 127.0.0.1
+local_port = 5555
+remote_port = 5555
+EOF
 
-      - name: Create Keep Alive Script
-        run: |
-          cat > keep_alive.sh << 'EOF'
-          #!/bin/bash
-
-          sleep 10
-
-          TUNNEL=""
-          while [[ -z "$TUNNEL" ]]; do
-            TUNNEL=$(curl -s http://localhost:4040/api/tunnels | grep -o '"public_url":"tcp://[^"]*' | cut -d'"' -f4 | head -1)
-            sleep 1
-          done
-
-          HOST=$(echo $TUNNEL | sed 's|tcp://||' | cut -d':' -f1)
-          PORT=$(echo $TUNNEL | sed 's|tcp://||' | cut -d':' -f2)
-          echo ""
-          echo "=========================================="
-          echo "✅ ANDROID EMULATOR READY!"
-          echo "🔗 NGROK CONNECTION:"
-          echo "   Host: $HOST"
-          echo "   Port: $PORT"
-          echo "   Use: adb connect $HOST:$PORT"
-          echo ""
-          echo "📱 You can run scrcpy or adb remotely!"
-          echo "=========================================="
-          while :; do sleep 60; done
-          EOF
-          chmod +x keep_alive.sh
+          nohup ./frpc -c frpc.ini &
+          cd ..
 
       - name: Launch Android Emulator
         uses: reactivecircus/android-emulator-runner@v2
@@ -70,7 +52,6 @@ jobs:
             adb root
             sleep 2
             adb tcpip 5555
-            sleep 2
-            ./ngrok tcp 5555 --log=stdout > /dev/null &
             sleep 10
-            bash keep_alive.sh
+            echo "FRP tunnel should now be forwarding 5555 to your VPS!"
+            while true; do sleep 60; done
