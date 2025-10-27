@@ -82,7 +82,10 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -memory 6144 -cores 4 -skin 1080x2400 -writable-system
           disable-animations: true
           script: |
-            MINUTES=${{ github.event.inputs.minutes }}
+            MINUTES="${{ github.event.inputs.minutes }}"
+            if [ -z "$MINUTES" ] || ! echo "$MINUTES" | grep -qE '^[0-9]+$'; then
+              MINUTES=5
+            fi
             SECONDS=$((MINUTES * 60))
             echo "========================================="
             echo "   🚀 Rooted Android 11 - Timed Run"
