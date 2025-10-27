@@ -1,7 +1,7 @@
-name: Android Cloud with FRP
-
 on:
   workflow_dispatch:
+
+name: Android Cloud with FRP
 
 jobs:
   android-cloud:
@@ -9,20 +9,20 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - uses: actions/checkout@v3
-
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
+      - name: Checkout
+        uses: actions/checkout@v3
 
       - name: Download and configure FRP client
         run: |
-          wget https://github.com/fatedier/frp/releases/download/v0.58.1/frp_0.58.1_linux_amd64.tar.gz
-          tar -xvzf frp_0.58.1_linux_amd64.tar.gz
-          cd frp_0.58.1_linux_amd64
-          cat > frpc.ini <<'EOFCONFIG'
+          set -euo pipefail
+          FRP_VERSION="0.58.1"
+          FRP_DIR="frp_${FRP_VERSION}_linux_amd64"
+          FRP_TARBALL="${FRP_DIR}.tar.gz"
+          wget -q "https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/${FRP_TARBALL}"
+          tar -xzf "${FRP_TARBALL}"
+          cd "${FRP_DIR}"
+          # create config
+          cat > frpc.ini <<'EOF'
 [common]
 server_addr = 159.195.6.61
 server_port = 7000
@@ -32,9 +32,11 @@ type = tcp
 local_ip = 127.0.0.1
 local_port = 5555
 remote_port = 5555
-EOFCONFIG
-
-          nohup ./frpc -c frpc.ini > frpc.log 2>&1 &
+EOF
+          chmod +x frpc || true
+          # start frpc in background and write logs to workspace
+          nohup ./frpc -c frpc.ini > "${GITHUB_WORKSPACE:-.}/frpc.log" 2>&1 &
+          echo "Started frpc (PID=$!)"
           cd ..
 
       - name: Launch Android Emulator
@@ -48,13 +50,37 @@ EOFCONFIG
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: |
+            set -euo pipefail
+            echo "Waiting for device..."
             adb wait-for-device
-            adb root
-            sleep 3
-            adb tcpip 5555
-            sleep 10
+
+            # Wait for Android to finish booting
+            echo "Waiting for boot completion..."
+            for i in $(seq 1 120); do
+              BOOT_COMPLETED=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+              if [ "$BOOT_COMPLETED" = "1" ]; then
+                echo "Device booted"
+                break
+              fi
+              sleep 1
+            done
+
+            # Give adb a little extra time
+            sleep 2
+
+            # Try to enable root (may fail on some images)
+            adb root || true
+            sleep 2
+
+            # Switch the emulator to TCP mode on port 5555 (local to the runner)
+            adb tcpip 5555 || true
+            sleep 2
+
             echo "============================================"
             echo "✅ Android Emulator Ready with FRP Tunnel!"
-            echo "📱 Connect using: adb connect 159.195.6.61:5555"
+            echo "📱 From your machine, connect using: adb connect 159.195.6.61:5555"
+            echo "Logs: $GITHUB_WORKSPACE/frpc.log"
             echo "============================================"
+
+            # Keep the job alive so the emulator and frpc process keep running for interactive use
             while true; do sleep 60; done
