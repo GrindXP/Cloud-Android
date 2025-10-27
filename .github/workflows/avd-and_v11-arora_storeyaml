@@ -1,4 +1,4 @@
-name: Rooted Android 11 + Manual Play Store - Max Performance + KCP
+name: Rooted Android 11 + Aurora Store - Max Performance + KCP
 
 on:
   workflow_dispatch:
@@ -41,6 +41,7 @@ jobs:
           sudo rm -rf /usr/local/share/boost
           sudo docker image prune --all --force
           sudo apt-get clean
+          df -h
 
       - name: Install FRP Client v0.58.1
         run: |
@@ -72,16 +73,11 @@ jobs:
           remotePort = 5554
           EOF
 
-      - name: Download Play Store APKs
+      - name: Download Aurora Store
         run: |
-          echo "📥 Downloading Play Store components..."
-          mkdir -p playstore-apks
-          cd playstore-apks
-          
-          # Download Play Store and Services (OpenGApps links)
-          wget -q https://github.com/opengapps/arm64/releases/download/20240715/open_gapps-arm64-11.0-pico-20240715.zip -O gapps.zip
-          unzip -q gapps.zip
-          echo "✅ Play Store APKs downloaded"
+          echo "📥 Downloading Aurora Store..."
+          wget -q https://gitlab.com/AuroraOSS/AuroraStore/-/releases/permalink/latest/downloads/AuroraStore_4.6.2.apk -O AuroraStore.apk
+          echo "✅ Aurora Store downloaded"
 
       - name: AVD Cache
         uses: actions/cache@v4
@@ -90,7 +86,7 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-30-rooted-playstore-manual-v1
+          key: avd-30-rooted-aurora-maxperf-v1
 
       - name: Create Rooted AVD Snapshot
         if: steps.avd-cache.outputs.cache-hit != 'true'
@@ -106,21 +102,9 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
           disable-animations: true
           script: |
-            echo "✅ Rooted AVD created - installing Play Store..."
+            echo "✅ Rooted AVD created"
             adb root
             adb wait-for-device
-            adb remount
-            
-            # Install Play Services Framework
-            adb push playstore-apks/Core/com.google.android.gms-*.apk /system/priv-app/
-            
-            # Install Play Store
-            adb push playstore-apks/Core/com.android.vending-*.apk /system/priv-app/
-            
-            # Set permissions
-            adb shell "chmod 644 /system/priv-app/*.apk"
-            
-            echo "✅ Play Store installed on rooted AVD"
 
       - name: Start FRP KCP Tunnel
         run: |
@@ -141,9 +125,9 @@ jobs:
           
           echo "⏱️  Session: ${DURATION_HOURS} hours"
           echo "🕐 Started: $(date)"
-          echo "🔥 Protocol: KCP (Low Latency)"
+          echo "🔥 Protocol: KCP (30-40% lower latency)"
           echo "🔓 Root: ✅ Enabled"
-          echo "🏪 Play Store: ✅ Manual Install"
+          echo "🏪 Aurora Store: ✅ Installed"
           echo "💾 RAM: 6GB | Storage: 12GB"
           echo "🤖 Android 11 (API 30)"
           echo ""
@@ -175,7 +159,7 @@ jobs:
           SCRIPT
           chmod +x monitor.sh
 
-      - name: Start Rooted Emulator with Play Store
+      - name: Start Rooted Emulator with Aurora Store
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
@@ -189,7 +173,7 @@ jobs:
           disable-animations: true
           script: |
             echo "========================================="
-            echo "   🚀 Rooted Android 11 + Play Store"
+            echo "   🚀 Rooted Android 11 + Aurora Store"
             echo "   💪 MAXIMUM PERFORMANCE"
             echo "========================================="
             echo ""
@@ -199,47 +183,64 @@ jobs:
             adb wait-for-device
             adb remount
             
+            echo "📦 Installing Aurora Store..."
+            adb install AuroraStore.apk
+            echo "✅ Aurora Store installed"
+            
             # Enable TCP/IP
             adb tcpip 5555
             sleep 5
             adb connect 127.0.0.1:5555
             sleep 2
             
+            echo ""
             echo "========================================="
             echo "   📱 Device Information"
             echo "========================================="
-            echo "Android Version: 11"
-            echo "API Level: 30"
+            echo "Android: 11 (API 30)"
             echo "RAM: 6GB | Storage: 12GB"
             echo "Root: ✅ Enabled (adb root)"
-            echo "Play Store: ✅ Manually Installed"
+            echo "Aurora Store: ✅ Installed"
+            echo "CPU: 4 cores (x86_64)"
             echo ""
             
             # Verify root
             echo "🔐 Root Status:"
-            adb shell "su -c 'whoami'" && echo "✅ Root verified" || echo "Root via adb root"
+            adb shell "whoami"
             
-            # Check Play Store installation
+            # Check Aurora Store installation
             echo ""
-            echo "🏪 Play Store Status:"
-            adb shell "pm list packages | grep vending" && echo "✅ Play Store detected" || echo "⚠️ Play Store may need activation"
+            echo "🏪 Aurora Store Status:"
+            adb shell "pm list packages | grep aurora" && echo "✅ Aurora Store ready"
+            
+            echo ""
+            echo "💾 Storage:"
+            adb -s 127.0.0.1:5555 shell df -h /data | grep -v Filesystem
+            echo ""
+            echo "🧠 Memory:"
+            adb -s 127.0.0.1:5555 shell cat /proc/meminfo | grep MemTotal
             
             echo ""
             echo "========================================="
             echo "   🌐 KCP TUNNEL READY"
             echo "========================================="
             echo ""
-            echo "Connect: 159.195.6.61:5555"
-            echo "Protocol: KCP (Low Latency)"
-            echo "Root: adb root (already enabled)"
-            echo "Play Store: Open Settings → Accounts"
+            echo "📱 Connect: 159.195.6.61:5555"
+            echo "🔓 Root: adb root (enabled)"
+            echo "🏪 Aurora Store: Open to download apps"
+            echo ""
+            echo "How to use Aurora Store:"
+            echo "  1. Open Aurora Store"
+            echo "  2. Choose Anonymous or Google login"
+            echo "  3. Search and download any app"
+            echo "  4. No Google Play Services needed!"
             echo ""
             echo "========================================="
-            echo "VPS IP: 159.195.6.61"
-            echo "ADB Port: 5555"
-            echo "Protocol: KCP (UDP)"
+            echo "VPS: 159.195.6.61:5555"
+            echo "Protocol: KCP (UDP) - Low Latency"
             echo "Android: 11 | RAM: 6GB | Storage: 12GB"
-            echo "Root: ✅ | Play Store: ✅"
+            echo "Root: ✅ | Aurora Store: ✅"
+            echo "Performance: 🚀 MAXIMUM"
             echo "========================================="
             echo ""
             ./monitor.sh ${{ github.event.inputs.duration }}
@@ -248,7 +249,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rooted-playstore-logs-${{ github.run_number }}
+          name: rooted-aurora-logs-${{ github.run_number }}
           path: |
             frpc.log
             frpc.toml
