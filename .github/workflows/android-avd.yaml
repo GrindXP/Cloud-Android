@@ -82,7 +82,7 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-${{ github.event.inputs.api_level }}-pixel6pro-v4
+          key: avd-${{ github.event.inputs.api_level }}-pixel6pro-v5
 
       - name: Create AVD Snapshot
         if: steps.avd-cache.outputs.cache-hit != 'true'
@@ -105,7 +105,6 @@ jobs:
           sleep 5
           if pgrep -x "frpc" > /dev/null; then
             echo "✅ FRP tunnel started"
-            tail -5 frpc.log
           fi
 
       - name: Start Emulator and Keep Session Alive
@@ -121,8 +120,6 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -memory 4096 -cores 4 -skin 1080x2400
           disable-animations: true
           script: |
-            set -e
-            
             echo "========================================="
             echo "   🚀 Android Emulator Started"
             echo "========================================="
@@ -148,15 +145,6 @@ jobs:
             echo "Model: $(adb -s 127.0.0.1:5555 shell getprop ro.product.model)"
             echo ""
             
-            echo "📦 Installing scrcpy server..."
-            wget -q https://github.com/Genymobile/scrcpy/releases/download/v3.3.3/scrcpy-server-v3.3.3 -O scrcpy-server.jar || true
-            if [ -f scrcpy-server.jar ]; then
-              adb -s 127.0.0.1:5555 push scrcpy-server.jar /data/local/tmp/scrcpy-server.jar && echo "✅ scrcpy server installed (v3.3.3)" || echo "⚠️  Failed to push scrcpy server"
-            else
-              echo "⚠️  scrcpy server download failed (optional - ADB still works)"
-            fi
-            echo ""
-            
             echo "========================================="
             echo "   🌐 READY FOR REMOTE CONNECTION"
             echo "========================================="
@@ -166,17 +154,19 @@ jobs:
             echo "  adb connect 159.195.6.61:5555"
             echo "  adb devices"
             echo ""
-            echo "Basic ADB commands:"
-            echo "  adb shell"
-            echo "  adb install app.apk"
-            echo "  adb logcat"
-            echo ""
-            echo "Screen mirroring:"
-            echo "  scrcpy --serial 159.195.6.61:5555 --max-size 1920 --bit-rate 8M"
+            echo "Common ADB commands:"
+            echo "  adb shell                    # Open shell"
+            echo "  adb install app.apk          # Install APK"
+            echo "  adb logcat                   # View logs"
+            echo "  adb pull /sdcard/file.txt    # Download file"
+            echo "  adb push file.txt /sdcard/   # Upload file"
+            echo "  adb shell input text hello   # Type text"
+            echo "  adb shell input keyevent 3   # Press HOME key"
             echo ""
             echo "========================================="
             echo "VPS IP: 159.195.6.61"
             echo "ADB Port: 5555"
+            echo "Console Port: 5554"
             echo "========================================="
             echo ""
             
@@ -186,7 +176,7 @@ jobs:
             
             echo "⏱️  Session: ${DURATION_HOURS} hours"
             echo "🕐 Started: $(date)"
-            echo "✅ Emulator ready!"
+            echo "✅ Emulator ready! Connect now from your local machine"
             echo ""
             
             ITERATION=0
@@ -209,7 +199,7 @@ jobs:
                 DEVICES=$(adb devices | grep -c "5555.*device" || echo "0")
                 FRP_STATUS="✅"
                 pgrep -x "frpc" > /dev/null || FRP_STATUS="❌"
-                echo "[$(date '+%H:%M:%S')] ⏳ ${HOURS}h ${MINUTES}m | 📱 ${DEVICES} | 🔗 ${FRP_STATUS}"
+                echo "[$(date '+%H:%M:%S')] ⏳ ${HOURS}h ${MINUTES}m left | 📱 ADB: ${DEVICES} | 🔗 FRP: ${FRP_STATUS}"
               fi
               
               sleep 1
