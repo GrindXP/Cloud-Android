@@ -22,7 +22,7 @@ jobs:
           wget https://github.com/fatedier/frp/releases/download/v0.58.1/frp_0.58.1_linux_amd64.tar.gz
           tar -xvzf frp_0.58.1_linux_amd64.tar.gz
           cd frp_0.58.1_linux_amd64
-          cat > frpc.ini << EOF
+          cat > frpc.ini <<EOF
 [common]
 server_addr = 159.195.6.61
 server_port = 7000
@@ -48,12 +48,10 @@ EOF
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: |
-            echo "Waiting for emulator..."
             adb wait-for-device
             adb root
             sleep 3
             adb tcpip 5555
             sleep 10
-            echo "FRP tunnel should now be forwarding 5555 to your VPS!"
-            # Keep action alive for manual interaction
+            echo "FRP tunnel forwarding port 5555 now active."
             while true; do sleep 60; done
