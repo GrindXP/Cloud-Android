@@ -1,4 +1,4 @@
-name: Rooted Android 11 + Aurora Store - Max Performance + KCP
+name: Rooted Android 11 - Maximum Performance + KCP
 
 on:
   workflow_dispatch:
@@ -73,12 +73,6 @@ jobs:
           remotePort = 5554
           EOF
 
-      - name: Download Aurora Store
-        run: |
-          echo "📥 Downloading Aurora Store..."
-          wget -q https://gitlab.com/AuroraOSS/AuroraStore/-/releases/permalink/latest/downloads/AuroraStore_4.6.2.apk -O AuroraStore.apk
-          echo "✅ Aurora Store downloaded"
-
       - name: AVD Cache
         uses: actions/cache@v4
         id: avd-cache
@@ -86,7 +80,7 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-30-rooted-aurora-maxperf-v1
+          key: avd-30-rooted-maxperf-v1
 
       - name: Create Rooted AVD Snapshot
         if: steps.avd-cache.outputs.cache-hit != 'true'
@@ -102,7 +96,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
           disable-animations: true
           script: |
-            echo "✅ Rooted AVD created"
+            echo "✅ Rooted AVD created with maximum specs"
             adb root
             adb wait-for-device
 
@@ -126,10 +120,10 @@ jobs:
           echo "⏱️  Session: ${DURATION_HOURS} hours"
           echo "🕐 Started: $(date)"
           echo "🔥 Protocol: KCP (30-40% lower latency)"
-          echo "🔓 Root: ✅ Enabled"
-          echo "🏪 Aurora Store: ✅ Installed"
+          echo "🔓 Root: ✅ Full Access"
           echo "💾 RAM: 6GB | Storage: 12GB"
           echo "🤖 Android 11 (API 30)"
+          echo "🚀 Maximum Performance Mode"
           echo ""
           
           ITERATION=0
@@ -159,7 +153,7 @@ jobs:
           SCRIPT
           chmod +x monitor.sh
 
-      - name: Start Rooted Emulator with Aurora Store
+      - name: Start Rooted Emulator - Maximum Performance
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
@@ -173,7 +167,7 @@ jobs:
           disable-animations: true
           script: |
             echo "========================================="
-            echo "   🚀 Rooted Android 11 + Aurora Store"
+            echo "   🚀 Rooted Android 11"
             echo "   💪 MAXIMUM PERFORMANCE"
             echo "========================================="
             echo ""
@@ -183,10 +177,6 @@ jobs:
             adb wait-for-device
             adb remount
             
-            echo "📦 Installing Aurora Store..."
-            adb install AuroraStore.apk
-            echo "✅ Aurora Store installed"
-            
             # Enable TCP/IP
             adb tcpip 5555
             sleep 5
@@ -195,51 +185,56 @@ jobs:
             
             echo ""
             echo "========================================="
-            echo "   📱 Device Information"
+            echo "   📱 Device Specifications"
             echo "========================================="
             echo "Android: 11 (API 30)"
-            echo "RAM: 6GB | Storage: 12GB"
-            echo "Root: ✅ Enabled (adb root)"
-            echo "Aurora Store: ✅ Installed"
+            echo "RAM: 6GB"
+            echo "Storage: 12GB"
             echo "CPU: 4 cores (x86_64)"
+            echo "GPU: SwiftShader (software rendering)"
+            echo "Root: ✅ Full Access"
+            echo "System: Writable"
             echo ""
             
             # Verify root
-            echo "🔐 Root Status:"
+            echo "🔐 Root Access:"
             adb shell "whoami"
             
-            # Check Aurora Store installation
             echo ""
-            echo "🏪 Aurora Store Status:"
-            adb shell "pm list packages | grep aurora" && echo "✅ Aurora Store ready"
-            
-            echo ""
-            echo "💾 Storage:"
+            echo "💾 Storage Available:"
             adb -s 127.0.0.1:5555 shell df -h /data | grep -v Filesystem
+            
             echo ""
             echo "🧠 Memory:"
             adb -s 127.0.0.1:5555 shell cat /proc/meminfo | grep MemTotal
             
             echo ""
             echo "========================================="
-            echo "   🌐 KCP TUNNEL READY"
+            echo "   🌐 CONNECTION INFO"
             echo "========================================="
             echo ""
-            echo "📱 Connect: 159.195.6.61:5555"
-            echo "🔓 Root: adb root (enabled)"
-            echo "🏪 Aurora Store: Open to download apps"
+            echo "📱 Connect from your device:"
+            echo "   • IP: 159.195.6.61"
+            echo "   • Port: 5555"
+            echo "   • Protocol: KCP (Low Latency)"
             echo ""
-            echo "How to use Aurora Store:"
-            echo "  1. Open Aurora Store"
-            echo "  2. Choose Anonymous or Google login"
-            echo "  3. Search and download any app"
-            echo "  4. No Google Play Services needed!"
+            echo "💻 ADB Commands:"
+            echo "   adb connect 159.195.6.61:5555"
+            echo "   adb devices"
+            echo "   adb root (already enabled)"
+            echo "   adb shell (root shell access)"
+            echo "   adb install app.apk"
+            echo ""
+            echo "📦 Install Apps:"
+            echo "   • Download APKs from browser"
+            echo "   • Install Aurora Store manually"
+            echo "   • Use adb install command"
             echo ""
             echo "========================================="
             echo "VPS: 159.195.6.61:5555"
-            echo "Protocol: KCP (UDP) - Low Latency"
+            echo "Protocol: KCP (UDP) - 30-40% Lower Latency"
             echo "Android: 11 | RAM: 6GB | Storage: 12GB"
-            echo "Root: ✅ | Aurora Store: ✅"
+            echo "Root: ✅ FULL ACCESS"
             echo "Performance: 🚀 MAXIMUM"
             echo "========================================="
             echo ""
@@ -249,7 +244,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rooted-aurora-logs-${{ github.run_number }}
+          name: rooted-avd-logs-${{ github.run_number }}
           path: |
             frpc.log
             frpc.toml
