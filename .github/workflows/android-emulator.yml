@@ -48,10 +48,12 @@ EOF
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: |
+            echo "Waiting for emulator..."
             adb wait-for-device
             adb root
-            sleep 2
+            sleep 3
             adb tcpip 5555
             sleep 10
             echo "FRP tunnel should now be forwarding 5555 to your VPS!"
+            # Keep action alive for manual interaction
             while true; do sleep 60; done
