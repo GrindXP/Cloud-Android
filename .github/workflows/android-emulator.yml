@@ -22,7 +22,7 @@ jobs:
           wget https://github.com/fatedier/frp/releases/download/v0.58.1/frp_0.58.1_linux_amd64.tar.gz
           tar -xvzf frp_0.58.1_linux_amd64.tar.gz
           cd frp_0.58.1_linux_amd64
-          cat > frpc.ini <<EOF
+          cat > frpc.ini << EOF
 [common]
 server_addr = 159.195.6.61
 server_port = 7000
