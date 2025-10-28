@@ -73,16 +73,18 @@ jobs:
           remotePort = 5554
           EOF
 
-      - name: AVD Cache
-        uses: actions/cache@v4
+      - name: Restore AVD Snapshot Cache
+        uses: actions/cache/restore@v4
         id: avd-cache
         with:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-30-rooted-maxperf-v1
+          key: avd-30-persistent-snapshot-${{ github.run_id }}
+          restore-keys: |
+            avd-30-persistent-snapshot-
 
-      - name: Create Rooted AVD Snapshot
+      - name: Create Initial AVD (First Run Only)
         if: steps.avd-cache.outputs.cache-hit != 'true'
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -96,9 +98,10 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
           disable-animations: true
           script: |
-            echo "✅ Rooted AVD created with maximum specs"
+            echo "✅ Creating fresh AVD for first time..."
             adb root
             adb wait-for-device
+            echo "✅ AVD initialized - snapshot will be saved automatically"
 
       - name: Start FRP KCP Tunnel
         run: |
@@ -123,6 +126,8 @@ jobs:
           echo "🔓 Root: ✅ Full Access"
           echo "💾 RAM: 6GB | Storage: 12GB"
           echo "🤖 Android 11 (API 30)"
+          echo "💽 Snapshot: ✅ Auto-save enabled"
+          echo "📦 Data Persistence: All apps & files preserved"
           echo "🚀 Maximum Performance Mode"
           echo ""
           
@@ -132,7 +137,14 @@ jobs:
             ELAPSED=$((CURRENT_TIME - START_TIME))
             
             if [ $ELAPSED -ge $DURATION_SECONDS ]; then
-              echo "✅ Session completed"
+              echo ""
+              echo "========================================="
+              echo "⏱️  Timer completed - Saving snapshot..."
+              echo "========================================="
+              echo "💾 All installed apps will be preserved"
+              echo "📁 All data and files will be saved"
+              echo "🔄 Next run will restore this exact state"
+              echo "========================================="
               break
             fi
             
@@ -153,7 +165,7 @@ jobs:
           SCRIPT
           chmod +x monitor.sh
 
-      - name: Start Rooted Emulator - Maximum Performance
+      - name: Start Rooted Emulator with Auto-Save Snapshot
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
@@ -169,8 +181,16 @@ jobs:
             echo "========================================="
             echo "   🚀 Rooted Android 11"
             echo "   💪 MAXIMUM PERFORMANCE"
+            echo "   💽 SNAPSHOT AUTO-SAVE ENABLED"
             echo "========================================="
             echo ""
+            
+            # Check if restoring from previous session
+            if [ -f ~/.android/avd/test.avd/snapshots/default_boot/snapshot.pb ]; then
+              echo "🔄 Restored from previous session!"
+              echo "📦 All your apps and data are preserved"
+              echo ""
+            fi
             
             # Enable root
             adb root
@@ -194,6 +214,7 @@ jobs:
             echo "GPU: SwiftShader (software rendering)"
             echo "Root: ✅ Full Access"
             echo "System: Writable"
+            echo "Snapshot: ✅ Auto-save on timer end"
             echo ""
             
             # Verify root
@@ -230,6 +251,12 @@ jobs:
             echo "   • Install Aurora Store manually"
             echo "   • Use adb install command"
             echo ""
+            echo "💽 DATA PERSISTENCE:"
+            echo "   ✅ All apps you install will be saved"
+            echo "   ✅ All files you create will be preserved"
+            echo "   ✅ All settings will be remembered"
+            echo "   ✅ Next workflow run restores everything"
+            echo ""
             echo "========================================="
             echo "⏱️  Session Duration: ${{ github.event.inputs.duration }} minutes"
             echo "VPS: 159.195.6.61:5555"
@@ -237,9 +264,23 @@ jobs:
             echo "Android: 11 | RAM: 6GB | Storage: 12GB"
             echo "Root: ✅ FULL ACCESS"
             echo "Performance: 🚀 MAXIMUM"
+            echo "Persistence: 💽 AUTO-SAVE SNAPSHOT"
             echo "========================================="
             echo ""
             ./monitor.sh ${{ github.event.inputs.duration }}
+            
+            echo ""
+            echo "💾 Preparing to save snapshot..."
+            echo "⏳ Please wait for emulator to close properly..."
+
+      - name: Save AVD Snapshot to Cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-30-persistent-snapshot-${{ github.run_id }}
 
       - name: Upload Logs
         if: always()
