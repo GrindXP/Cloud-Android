@@ -1,18 +1,18 @@
-name: Rooted Android 11 - Timed Run, Auto Save
+name: avd-11-cached
 
 on:
   workflow_dispatch:
     inputs:
-      minutes:
-        description: 'AVD session duration in minutes (1-360 min)'
-        required: true
+      duration:
+        description: 'Session duration in minutes (max 360)'
+        required: false
         default: '5'
 
 jobs:
   run-emulator:
     runs-on: ubuntu-latest
-    timeout-minutes: 370  # Allow up to a 6-hour session
-
+    timeout-minutes: 360
+    
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -34,23 +34,55 @@ jobs:
 
       - name: Free Up Disk Space
         run: |
+          echo "🗑️ Freeing up disk space..."
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo rm -rf /usr/local/share/boost
           sudo docker image prune --all --force
           sudo apt-get clean
+          df -h
 
-      - name: Restore AVD Cache
+      - name: Install FRP Client v0.58.1
+        run: |
+          wget -q https://github.com/fatedier/frp/releases/download/v0.58.1/frp_0.58.1_linux_amd64.tar.gz
+          tar -xzf frp_0.58.1_linux_amd64.tar.gz
+          sudo cp frp_0.58.1_linux_amd64/frpc /usr/local/bin/
+          sudo chmod +x /usr/local/bin/frpc
+          rm -rf frp_0.58.1_linux_amd64*
+
+      - name: Create FRP Client Configuration with KCP
+        run: |
+          cat > frpc.toml << 'EOF'
+          serverAddr = "159.195.6.61"
+          serverPort = 7000
+          transport.protocol = "kcp"
+          
+          [[proxies]]
+          name = "github-avd-adb"
+          type = "tcp"
+          localIP = "127.0.0.1"
+          localPort = 5555
+          remotePort = 5555
+          
+          [[proxies]]
+          name = "github-avd-console"
+          type = "tcp"
+          localIP = "127.0.0.1"
+          localPort = 5554
+          remotePort = 5554
+          EOF
+
+      - name: AVD Cache
         uses: actions/cache@v4
         id: avd-cache
         with:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-timed-cache-v1
+          key: avd-30-rooted-maxperf-v1
 
-      - name: Create AVD if needed
+      - name: Create Rooted AVD Snapshot
         if: steps.avd-cache.outputs.cache-hit != 'true'
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -64,11 +96,64 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
           disable-animations: true
           script: |
-            echo "✅ AVD created"
+            echo "✅ Rooted AVD created with maximum specs"
             adb root
             adb wait-for-device
 
-      - name: Run Emulator for Input Minutes
+      - name: Start FRP KCP Tunnel
+        run: |
+          echo "🚀 Starting FRP with KCP protocol..."
+          nohup frpc -c frpc.toml > frpc.log 2>&1 &
+          sleep 5
+          if pgrep -x "frpc" > /dev/null; then
+            echo "✅ FRP KCP tunnel started"
+          fi
+
+      - name: Create Monitoring Script
+        run: |
+          cat > monitor.sh << 'SCRIPT'
+          #!/bin/bash
+          DURATION_MINUTES=$1
+          DURATION_SECONDS=$((60 * DURATION_MINUTES))
+          START_TIME=$(date +%s)
+          
+          echo "⏱️  Session: ${DURATION_MINUTES} minutes"
+          echo "🕐 Started: $(date)"
+          echo "🔥 Protocol: KCP (30-40% lower latency)"
+          echo "🔓 Root: ✅ Full Access"
+          echo "💾 RAM: 6GB | Storage: 12GB"
+          echo "🤖 Android 11 (API 30)"
+          echo "🚀 Maximum Performance Mode"
+          echo ""
+          
+          ITERATION=0
+          while true; do
+            CURRENT_TIME=$(date +%s)
+            ELAPSED=$((CURRENT_TIME - START_TIME))
+            
+            if [ $ELAPSED -ge $DURATION_SECONDS ]; then
+              echo "✅ Session completed"
+              break
+            fi
+            
+            REMAINING=$((DURATION_SECONDS - ELAPSED))
+            MINUTES=$((REMAINING / 60))
+            SECONDS=$((REMAINING % 60))
+            
+            ITERATION=$((ITERATION + 1))
+            if [ $((ITERATION % 10)) -eq 0 ]; then
+              DEVICES=$(adb devices | grep -c "5555.*device" || echo "0")
+              FRP_STATUS="✅"
+              pgrep -x "frpc" > /dev/null || FRP_STATUS="❌"
+              echo "[$(date '+%H:%M:%S')] ⏳ ${MINUTES}m ${SECONDS}s | 📱 ADB: ${DEVICES} | 🔗 KCP: ${FRP_STATUS}"
+            fi
+            
+            sleep 1
+          done
+          SCRIPT
+          chmod +x monitor.sh
+
+      - name: Start Rooted Emulator - Maximum Performance
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
@@ -81,42 +166,87 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -memory 6144 -cores 4 -skin 1080x2400 -writable-system
           disable-animations: true
           script: |
-            #!/bin/bash
-            set -e
-            MINUTES="${{ github.event.inputs.minutes }}"
-            # Validation & fallback
-            if [[ -z "$MINUTES" ]] || ! [[ "$MINUTES" =~ ^[0-9]+$ ]]; then
-              MINUTES=5
-            fi
-            if (( MINUTES < 1 || MINUTES > 360 )); then
-              MINUTES=5
-            fi
-            SECONDS=$((MINUTES * 60))
             echo "========================================="
-            echo "   🚀 Rooted Android 11 - Timed Run"
+            echo "   🚀 Rooted Android 11"
+            echo "   💪 MAXIMUM PERFORMANCE"
             echo "========================================="
+            echo ""
+            
+            # Enable root
             adb root
             adb wait-for-device
             adb remount
+            
+            # Enable TCP/IP
             adb tcpip 5555
-            sleep 3
-            adb connect 127.0.0.1:5555 || true
+            sleep 5
+            adb connect 127.0.0.1:5555
+            sleep 2
+            
             echo ""
-            echo "✅ AVD Running"
-            echo "⏱️ Waiting $SECONDS seconds (${MINUTES} minutes) before closing..."
-            sleep $SECONDS
-            echo "✅ Session ended. Closing AVD and saving cache..."
+            echo "========================================="
+            echo "   📱 Device Specifications"
+            echo "========================================="
+            echo "Android: 11 (API 30)"
+            echo "RAM: 6GB"
+            echo "Storage: 12GB"
+            echo "CPU: 4 cores (x86_64)"
+            echo "GPU: SwiftShader (software rendering)"
+            echo "Root: ✅ Full Access"
+            echo "System: Writable"
+            echo ""
+            
+            # Verify root
+            echo "🔐 Root Access:"
+            adb shell "whoami"
+            
+            echo ""
+            echo "💾 Storage Available:"
+            adb -s 127.0.0.1:5555 shell df -h /data | grep -v Filesystem
+            
+            echo ""
+            echo "🧠 Memory:"
+            adb -s 127.0.0.1:5555 shell cat /proc/meminfo | grep MemTotal
+            
+            echo ""
+            echo "========================================="
+            echo "   🌐 CONNECTION INFO"
+            echo "========================================="
+            echo ""
+            echo "📱 Connect from your device:"
+            echo "   • IP: 159.195.6.61"
+            echo "   • Port: 5555"
+            echo "   • Protocol: KCP (Low Latency)"
+            echo ""
+            echo "💻 ADB Commands:"
+            echo "   adb connect 159.195.6.61:5555"
+            echo "   adb devices"
+            echo "   adb root (already enabled)"
+            echo "   adb shell (root shell access)"
+            echo "   adb install app.apk"
+            echo ""
+            echo "📦 Install Apps:"
+            echo "   • Download APKs from browser"
+            echo "   • Install Aurora Store manually"
+            echo "   • Use adb install command"
+            echo ""
+            echo "========================================="
+            echo "⏱️  Session Duration: ${{ github.event.inputs.duration }} minutes"
+            echo "VPS: 159.195.6.61:5555"
+            echo "Protocol: KCP (UDP) - 30-40% Lower Latency"
+            echo "Android: 11 | RAM: 6GB | Storage: 12GB"
+            echo "Root: ✅ FULL ACCESS"
+            echo "Performance: 🚀 MAXIMUM"
+            echo "========================================="
+            echo ""
+            ./monitor.sh ${{ github.event.inputs.duration }}
 
-      - name: Save AVD Data to Cache (always)
-        uses: actions/cache@v4
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
+          name: rooted-avd-logs-${{ github.run_number }}
           path: |
-            ~/.android/avd/*
-            ~/.android/adb*
-          key: avd-timed-cache-v1
-          save-always: true
-
-      - name: Workflow Complete
-        run: |
-          echo "✅ Cache saved successfully!"
-          echo "🎉 Workflow complete. AVD state preserved for next run."
+            frpc.log
+            frpc.toml
+          retention-days: 7
