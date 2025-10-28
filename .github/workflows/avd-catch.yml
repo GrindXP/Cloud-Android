@@ -159,7 +159,7 @@ jobs:
           api-level: 30
           target: google_apis
           arch: x86_64
-          profile: pixel6pro
+          profile: pixel_xl
           avd-name: test
           ram-size: 6144M
           heap-size: 1024M
