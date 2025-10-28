@@ -1,4 +1,4 @@
-name: avd-cache
+name: avd-catch
 
 on:
   workflow_dispatch:
@@ -80,28 +80,9 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-30-persistent-snapshot-${{ github.run_id }}
+          key: avd-30-data-v1-${{ github.run_number }}
           restore-keys: |
-            avd-30-persistent-snapshot-
-
-      - name: Create Initial AVD (First Run Only)
-        if: steps.avd-cache.outputs.cache-hit != 'true'
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 30
-          target: google_apis
-          arch: x86_64
-          profile: pixel_6_pro
-          ram-size: 6144M
-          heap-size: 1024M
-          disk-size: 12288M
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
-          disable-animations: true
-          script: |
-            echo "✅ Creating fresh AVD for first time..."
-            adb root
-            adb wait-for-device
-            echo "✅ AVD initialized - snapshot will be saved automatically"
+            avd-30-data-v1-
 
       - name: Start FRP KCP Tunnel
         run: |
@@ -179,24 +160,32 @@ jobs:
           
           # Check if restoring from previous session
           if [ -f "$HOME/.android/avd/test.avd/snapshots/default_boot/snapshot.pb" ]; then
-            echo "🔄 Restored from previous session!"
+            echo "🔄 ✅ RESTORED FROM PREVIOUS SESSION!"
             echo "📦 All your apps and data are preserved"
             echo ""
           else
-            echo "🆕 This is a fresh AVD - no previous snapshot found"
+            echo "🆕 This is a fresh AVD - first run"
             echo ""
           fi
           
           # Enable root
+          echo "🔐 Enabling root access..."
           adb root
           adb wait-for-device
+          sleep 2
           adb remount
           
           # Enable TCP/IP
+          echo "🔌 Configuring TCP/IP on port 5555..."
           adb tcpip 5555
           sleep 5
           adb connect 127.0.0.1:5555
-          sleep 2
+          sleep 3
+          
+          # Verify connection
+          echo ""
+          echo "🔌 Verifying ADB connections..."
+          adb devices
           
           echo ""
           echo "========================================="
@@ -213,16 +202,27 @@ jobs:
           echo ""
           
           # Verify root
-          echo "🔐 Root Access:"
-          adb shell "whoami"
+          echo "🔐 Verifying Root Access:"
+          ROOT_USER=$(adb shell "whoami" 2>/dev/null | tr -d '
+')
+          if [ "$ROOT_USER" = "root" ]; then
+            echo "✅ Root confirmed: $ROOT_USER"
+          else
+            echo "⚠️  Root status: $ROOT_USER"
+          fi
           
           echo ""
           echo "💾 Storage Available:"
-          adb -s 127.0.0.1:5555 shell df -h /data | grep -v Filesystem
+          adb -s 127.0.0.1:5555 shell df -h /data 2>/dev/null | grep -v Filesystem || echo "⏳ Storage info pending..."
           
           echo ""
           echo "🧠 Memory:"
-          adb -s 127.0.0.1:5555 shell cat /proc/meminfo | grep MemTotal
+          adb -s 127.0.0.1:5555 shell cat /proc/meminfo 2>/dev/null | grep MemTotal || echo "⏳ Memory info pending..."
+          
+          echo ""
+          echo "📱 Installed Packages:"
+          PACKAGE_COUNT=$(adb shell pm list packages 2>/dev/null | wc -l)
+          echo "Total packages: $PACKAGE_COUNT"
           
           echo ""
           echo "========================================="
@@ -267,8 +267,8 @@ jobs:
           ./monitor.sh $1
           
           echo ""
-          echo "💾 Preparing to save snapshot..."
-          echo "⏳ Please wait for emulator to close properly..."
+          echo "💾 Session ended - Snapshot saved automatically"
+          echo "🔄 Run workflow again to restore this state"
           SESSIONSCRIPT
           chmod +x session.sh
 
@@ -293,7 +293,7 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-30-persistent-snapshot-${{ github.run_id }}
+          key: avd-30-data-v1-${{ github.run_number }}
 
       - name: Upload Logs
         if: always()
