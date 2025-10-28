@@ -1,4 +1,4 @@
-name: avd-catch
+name: avd-chatch
 
 on:
   workflow_dispatch:
@@ -95,7 +95,7 @@ jobs:
 
       - name: Create Monitoring Script
         run: |
-          cat > monitor.sh << 'SCRIPT'
+          cat > monitor.sh << 'MONITORSCRIPT'
           #!/bin/bash
           DURATION_MINUTES=$1
           DURATION_SECONDS=$((60 * DURATION_MINUTES))
@@ -143,7 +143,7 @@ jobs:
             
             sleep 1
           done
-          SCRIPT
+          MONITORSCRIPT
           chmod +x monitor.sh
 
       - name: Create AVD Session Script
@@ -159,7 +159,8 @@ jobs:
           echo ""
           
           # Check if restoring from previous session
-          if [ -f "$HOME/.android/avd/test.avd/snapshots/default_boot/snapshot.pb" ]; then
+          SNAPSHOT_FILE="$HOME/.android/avd/test.avd/snapshots/default_boot/snapshot.pb"
+          if [ -f "$SNAPSHOT_FILE" ]; then
             echo "🔄 ✅ RESTORED FROM PREVIOUS SESSION!"
             echo "📦 All your apps and data are preserved"
             echo ""
@@ -295,6 +296,15 @@ jobs:
             ~/.android/adb*
           key: avd-30-data-v1-${{ github.run_number }}
 
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rooted-avd-logs-${{ github.run_number }}
+          path: |
+            frpc.log
+            frpc.toml
+          retention-days: 7
       - name: Upload Logs
         if: always()
         uses: actions/upload-artifact@v4
