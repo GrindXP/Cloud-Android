@@ -1,4 +1,4 @@
-name: avd-11-cached
+name: avd-cache
 
 on:
   workflow_dispatch:
@@ -186,9 +186,13 @@ jobs:
             echo ""
             
             # Check if restoring from previous session
-            if [ -f ~/.android/avd/test.avd/snapshots/default_boot/snapshot.pb ]; then
+            SNAPSHOT_FILE="$HOME/.android/avd/test.avd/snapshots/default_boot/snapshot.pb"
+            if [ -f "$SNAPSHOT_FILE" ]; then
               echo "🔄 Restored from previous session!"
               echo "📦 All your apps and data are preserved"
+              echo ""
+            else
+              echo "🆕 This is a fresh AVD - no previous snapshot found"
               echo ""
             fi
             
