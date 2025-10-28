@@ -1,4 +1,4 @@
-name: avd-chatch
+name: avd-andr11
 
 on:
   workflow_dispatch:
@@ -95,21 +95,20 @@ jobs:
 
       - name: Create Monitoring Script
         run: |
-          cat > monitor.sh << 'MONITORSCRIPT'
+          cat > monitor.sh << 'EOF'
           #!/bin/bash
           DURATION_MINUTES=$1
           DURATION_SECONDS=$((60 * DURATION_MINUTES))
           START_TIME=$(date +%s)
           
-          echo "⏱️  Session: ${DURATION_MINUTES} minutes"
-          echo "🕐 Started: $(date)"
-          echo "🔥 Protocol: KCP (30-40% lower latency)"
-          echo "🔓 Root: ✅ Full Access"
-          echo "💾 RAM: 6GB | Storage: 12GB"
-          echo "🤖 Android 11 (API 30)"
-          echo "💽 Snapshot: ✅ Auto-save enabled"
-          echo "📦 Data Persistence: All apps & files preserved"
-          echo "🚀 Maximum Performance Mode"
+          echo "Session: ${DURATION_MINUTES} minutes"
+          echo "Started: $(date)"
+          echo "Protocol: KCP"
+          echo "Root: Full Access"
+          echo "RAM: 6GB | Storage: 12GB"
+          echo "Android 11 (API 30)"
+          echo "Snapshot: Auto-save enabled"
+          echo "Data Persistence: All apps and files preserved"
           echo ""
           
           ITERATION=0
@@ -119,13 +118,12 @@ jobs:
             
             if [ $ELAPSED -ge $DURATION_SECONDS ]; then
               echo ""
-              echo "========================================="
-              echo "⏱️  Timer completed - Saving snapshot..."
-              echo "========================================="
-              echo "💾 All installed apps will be preserved"
-              echo "📁 All data and files will be saved"
-              echo "🔄 Next run will restore this exact state"
-              echo "========================================="
+              echo "========================================"
+              echo "Timer completed - Saving snapshot..."
+              echo "All installed apps will be preserved"
+              echo "All data and files will be saved"
+              echo "Next run will restore this exact state"
+              echo "========================================"
               break
             fi
             
@@ -136,48 +134,48 @@ jobs:
             ITERATION=$((ITERATION + 1))
             if [ $((ITERATION % 10)) -eq 0 ]; then
               DEVICES=$(adb devices | grep -c "5555.*device" || echo "0")
-              FRP_STATUS="✅"
-              pgrep -x "frpc" > /dev/null || FRP_STATUS="❌"
-              echo "[$(date '+%H:%M:%S')] ⏳ ${MINUTES}m ${SECONDS}s | 📱 ADB: ${DEVICES} | 🔗 KCP: ${FRP_STATUS}"
+              FRP_STATUS="OK"
+              pgrep -x "frpc" > /dev/null || FRP_STATUS="FAIL"
+              echo "[$(date '+%H:%M:%S')] ${MINUTES}m ${SECONDS}s | ADB: ${DEVICES} | KCP: ${FRP_STATUS}"
             fi
             
             sleep 1
           done
-          MONITORSCRIPT
+          EOF
           chmod +x monitor.sh
 
       - name: Create AVD Session Script
         run: |
-          cat > session.sh << 'SESSIONSCRIPT'
+          cat > session.sh << 'EOF'
           #!/bin/bash
           
-          echo "========================================="
-          echo "   🚀 Rooted Android 11"
-          echo "   💪 MAXIMUM PERFORMANCE"
-          echo "   💽 SNAPSHOT AUTO-SAVE ENABLED"
-          echo "========================================="
+          echo "========================================"
+          echo "   Rooted Android 11"
+          echo "   MAXIMUM PERFORMANCE"
+          echo "   SNAPSHOT AUTO-SAVE ENABLED"
+          echo "========================================"
           echo ""
           
           # Check if restoring from previous session
           SNAPSHOT_FILE="$HOME/.android/avd/test.avd/snapshots/default_boot/snapshot.pb"
           if [ -f "$SNAPSHOT_FILE" ]; then
-            echo "🔄 ✅ RESTORED FROM PREVIOUS SESSION!"
-            echo "📦 All your apps and data are preserved"
+            echo "RESTORED FROM PREVIOUS SESSION"
+            echo "All your apps and data are preserved"
             echo ""
           else
-            echo "🆕 This is a fresh AVD - first run"
+            echo "This is a fresh AVD - first run"
             echo ""
           fi
           
           # Enable root
-          echo "🔐 Enabling root access..."
+          echo "Enabling root access..."
           adb root
           adb wait-for-device
           sleep 2
           adb remount
           
           # Enable TCP/IP
-          echo "🔌 Configuring TCP/IP on port 5555..."
+          echo "Configuring TCP/IP on port 5555..."
           adb tcpip 5555
           sleep 5
           adb connect 127.0.0.1:5555
@@ -185,92 +183,92 @@ jobs:
           
           # Verify connection
           echo ""
-          echo "🔌 Verifying ADB connections..."
+          echo "Verifying ADB connections..."
           adb devices
           
           echo ""
-          echo "========================================="
-          echo "   📱 Device Specifications"
-          echo "========================================="
+          echo "========================================"
+          echo "   Device Specifications"
+          echo "========================================"
           echo "Android: 11 (API 30)"
           echo "RAM: 6GB"
           echo "Storage: 12GB"
           echo "CPU: 4 cores (x86_64)"
-          echo "GPU: SwiftShader (software rendering)"
-          echo "Root: ✅ Full Access"
+          echo "GPU: SwiftShader"
+          echo "Root: Full Access"
           echo "System: Writable"
-          echo "Snapshot: ✅ Auto-save on timer end"
+          echo "Snapshot: Auto-save on timer end"
           echo ""
           
           # Verify root
-          echo "🔐 Verifying Root Access:"
+          echo "Verifying Root Access:"
           ROOT_USER=$(adb shell "whoami" 2>/dev/null | tr -d '
 ')
           if [ "$ROOT_USER" = "root" ]; then
-            echo "✅ Root confirmed: $ROOT_USER"
+            echo "Root confirmed: $ROOT_USER"
           else
-            echo "⚠️  Root status: $ROOT_USER"
+            echo "Root status: $ROOT_USER"
           fi
           
           echo ""
-          echo "💾 Storage Available:"
-          adb -s 127.0.0.1:5555 shell df -h /data 2>/dev/null | grep -v Filesystem || echo "⏳ Storage info pending..."
+          echo "Storage Available:"
+          adb -s 127.0.0.1:5555 shell df -h /data 2>/dev/null | grep -v Filesystem || echo "Storage info pending..."
           
           echo ""
-          echo "🧠 Memory:"
-          adb -s 127.0.0.1:5555 shell cat /proc/meminfo 2>/dev/null | grep MemTotal || echo "⏳ Memory info pending..."
+          echo "Memory:"
+          adb -s 127.0.0.1:5555 shell cat /proc/meminfo 2>/dev/null | grep MemTotal || echo "Memory info pending..."
           
           echo ""
-          echo "📱 Installed Packages:"
+          echo "Installed Packages:"
           PACKAGE_COUNT=$(adb shell pm list packages 2>/dev/null | wc -l)
           echo "Total packages: $PACKAGE_COUNT"
           
           echo ""
-          echo "========================================="
-          echo "   🌐 CONNECTION INFO"
-          echo "========================================="
+          echo "========================================"
+          echo "   CONNECTION INFO"
+          echo "========================================"
           echo ""
-          echo "📱 Connect from your device:"
-          echo "   • IP: 159.195.6.61"
-          echo "   • Port: 5555"
-          echo "   • Protocol: KCP (Low Latency)"
+          echo "Connect from your device:"
+          echo "  IP: 159.195.6.61"
+          echo "  Port: 5555"
+          echo "  Protocol: KCP (Low Latency)"
           echo ""
-          echo "💻 ADB Commands:"
-          echo "   adb connect 159.195.6.61:5555"
-          echo "   adb devices"
-          echo "   adb root (already enabled)"
-          echo "   adb shell (root shell access)"
-          echo "   adb install app.apk"
+          echo "ADB Commands:"
+          echo "  adb connect 159.195.6.61:5555"
+          echo "  adb devices"
+          echo "  adb root (already enabled)"
+          echo "  adb shell (root shell access)"
+          echo "  adb install app.apk"
           echo ""
-          echo "📦 Install Apps:"
-          echo "   • Download APKs from browser"
-          echo "   • Install Aurora Store manually"
-          echo "   • Use adb install command"
+          echo "Install Apps:"
+          echo "  Download APKs from browser"
+          echo "  Install Aurora Store manually"
+          echo "  Use adb install command"
           echo ""
-          echo "💽 DATA PERSISTENCE:"
-          echo "   ✅ All apps you install will be saved"
-          echo "   ✅ All files you create will be preserved"
-          echo "   ✅ All settings will be remembered"
-          echo "   ✅ Next workflow run restores everything"
+          echo "DATA PERSISTENCE:"
+          echo "  All apps you install will be saved"
+          echo "  All files you create will be preserved"
+          echo "  All settings will be remembered"
+          echo "  Next workflow run restores everything"
           echo ""
-          echo "========================================="
-          echo "⏱️  Session Duration: $1 minutes"
+          echo "========================================"
+          echo "Session Duration: $1 minutes"
           echo "VPS: 159.195.6.61:5555"
-          echo "Protocol: KCP (UDP) - 30-40% Lower Latency"
+          echo "Protocol: KCP (UDP) - Low Latency"
           echo "Android: 11 | RAM: 6GB | Storage: 12GB"
-          echo "Root: ✅ FULL ACCESS"
-          echo "Performance: 🚀 MAXIMUM"
-          echo "Persistence: 💽 AUTO-SAVE SNAPSHOT"
-          echo "========================================="
+          echo "Root: FULL ACCESS"
+          echo "Performance: MAXIMUM"
+          echo "Persistence: AUTO-SAVE SNAPSHOT"
+          echo "========================================"
           echo ""
           
           # Run monitoring
           ./monitor.sh $1
           
           echo ""
-          echo "💾 Session ended - Snapshot saved automatically"
-          echo "🔄 Run workflow again to restore this state"
-          SESSIONSCRIPT
+          echo "Session ended - Snapshot saved automatically"
+          echo "Run workflow again to restore this state"
+          EOF
           chmod +x session.sh
 
       - name: Start Rooted Emulator with Auto-Save Snapshot
@@ -296,15 +294,6 @@ jobs:
             ~/.android/adb*
           key: avd-30-data-v1-${{ github.run_number }}
 
-      - name: Upload Logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: rooted-avd-logs-${{ github.run_number }}
-          path: |
-            frpc.log
-            frpc.toml
-          retention-days: 7
       - name: Upload Logs
         if: always()
         uses: actions/upload-artifact@v4
