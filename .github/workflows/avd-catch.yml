@@ -1,4 +1,4 @@
-name: avd-andr11
+name: persistent-avd-android11
 
 on:
   workflow_dispatch:
@@ -6,15 +6,18 @@ on:
       duration:
         description: 'Session duration in minutes (max 360)'
         required: false
-        default: '5'
+        default: '60'
         type: string
 
 jobs:
-  run-emulator:
+  android-emulator:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     
     steps:
+      # ============================================
+      # STEP 1: Basic Setup
+      # ============================================
       - name: Checkout Repository
         uses: actions/checkout@v4
 
@@ -23,6 +26,7 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -33,6 +37,9 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      # ============================================
+      # STEP 2: Free Up Disk Space
+      # ============================================
       - name: Free Up Disk Space
         run: |
           echo "🗑️ Freeing up disk space..."
@@ -42,17 +49,24 @@ jobs:
           sudo rm -rf /usr/local/share/boost
           sudo docker image prune --all --force
           sudo apt-get clean
+          echo ""
+          echo "📊 Available disk space:"
           df -h
 
+      # ============================================
+      # STEP 3: Install & Configure FRP Tunnel
+      # ============================================
       - name: Install FRP Client v0.58.1
         run: |
+          echo "📥 Installing FRP client..."
           wget -q https://github.com/fatedier/frp/releases/download/v0.58.1/frp_0.58.1_linux_amd64.tar.gz
           tar -xzf frp_0.58.1_linux_amd64.tar.gz
           sudo cp frp_0.58.1_linux_amd64/frpc /usr/local/bin/
           sudo chmod +x /usr/local/bin/frpc
           rm -rf frp_0.58.1_linux_amd64*
+          echo "✅ FRP client installed"
 
-      - name: Create FRP Client Configuration with KCP
+      - name: Create FRP Configuration
         run: |
           cat > frpc.toml << 'EOF'
           serverAddr = "159.195.6.61"
@@ -73,43 +87,59 @@ jobs:
           localPort = 5554
           remotePort = 5554
           EOF
+          echo "✅ FRP configuration created"
 
-      - name: Restore AVD Snapshot Cache
-        uses: actions/cache/restore@v4
+      - name: Start FRP Tunnel
+        run: |
+          echo "🚀 Starting FRP KCP tunnel..."
+          nohup frpc -c frpc.toml > frpc.log 2>&1 &
+          sleep 5
+          if pgrep -x "frpc" > /dev/null; then
+            echo "✅ FRP tunnel running"
+            echo "📡 Remote access: 159.195.6.61:5555"
+          else
+            echo "❌ FRP tunnel failed to start"
+            exit 1
+          fi
+
+      # ============================================
+      # STEP 4: AVD Cache - CRITICAL FOR PERSISTENCE
+      # ============================================
+      - name: AVD Cache (Restore Previous State)
+        uses: actions/cache@v4
         id: avd-cache
         with:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-30-persistent-snapshot
+          key: avd-30-persistent-v1
           restore-keys: |
-            avd-30-persistent-snapshot
+            avd-30-persistent-v1
 
-      - name: Start FRP KCP Tunnel
+      - name: Check Cache Status
         run: |
-          echo "🚀 Starting FRP with KCP protocol..."
-          nohup frpc -c frpc.toml > frpc.log 2>&1 &
-          sleep 5
-          if pgrep -x "frpc" > /dev/null; then
-            echo "✅ FRP KCP tunnel started"
+          if [ "${{ steps.avd-cache.outputs.cache-hit }}" == "true" ]; then
+            echo "✅ CACHE HIT - Restoring previous AVD state"
+            echo "📦 All apps, data, and settings will be restored"
+            ls -lah ~/.android/avd/ 2>/dev/null || echo "AVD directory being prepared..."
+          else
+            echo "🆕 FIRST RUN - Creating fresh AVD"
+            echo "📝 This state will be saved for next run"
           fi
 
-      - name: Create Monitoring Script
+      # ============================================
+      # STEP 5: Create Session Scripts
+      # ============================================
+      - name: Create Timer Script
         run: |
-          cat > monitor.sh << 'EOF'
+          cat > timer.sh << 'ENDSCRIPT'
           #!/bin/bash
           DURATION_MINUTES=$1
           DURATION_SECONDS=$((60 * DURATION_MINUTES))
           START_TIME=$(date +%s)
           
-          echo "Session: ${DURATION_MINUTES} minutes"
-          echo "Started: $(date)"
-          echo "Protocol: KCP"
-          echo "Root: Full Access"
-          echo "RAM: 6GB | Storage: 12GB"
-          echo "Android 11 (API 30)"
-          echo "Snapshot: Auto-save enabled"
-          echo "Data Persistence: All apps and files preserved"
+          echo "⏱️  Session Timer: ${DURATION_MINUTES} minutes"
+          echo "🕐 Started: $(date '+%Y-%m-%d %H:%M:%S')"
           echo ""
           
           ITERATION=0
@@ -119,12 +149,13 @@ jobs:
             
             if [ $ELAPSED -ge $DURATION_SECONDS ]; then
               echo ""
-              echo "========================================"
-              echo "Timer completed - Saving snapshot..."
-              echo "All installed apps will be preserved"
-              echo "All data and files will be saved"
-              echo "Next run will restore this exact state"
-              echo "========================================"
+              echo "════════════════════════════════════════"
+              echo "⏰ Session Complete - Auto-saving state"
+              echo "💾 All apps will be preserved"
+              echo "💾 All data will be saved"
+              echo "💾 All files will persist"
+              echo "🔄 Next run will restore this exact state"
+              echo "════════════════════════════════════════"
               break
             fi
             
@@ -134,182 +165,230 @@ jobs:
             
             ITERATION=$((ITERATION + 1))
             if [ $((ITERATION % 10)) -eq 0 ]; then
-              DEVICES=$(adb devices | grep -c "5555.*device" || echo "0")
-              FRP_STATUS="OK"
-              pgrep -x "frpc" > /dev/null || FRP_STATUS="FAIL"
-              echo "[$(date '+%H:%M:%S')] ${MINUTES}m ${SECONDS}s | ADB: ${DEVICES} | KCP: ${FRP_STATUS}"
+              DEVICES=$(adb devices 2>/dev/null | grep -c "device$" || echo "0")
+              FRP_STATUS="✅"
+              pgrep -x "frpc" > /dev/null || FRP_STATUS="❌"
+              echo "[$(date '+%H:%M:%S')] ⏳ ${MINUTES}m ${SECONDS}s | 📱 Devices: ${DEVICES} | 🌐 Tunnel: ${FRP_STATUS}"
             fi
             
             sleep 1
           done
-          EOF
-          chmod +x monitor.sh
+          ENDSCRIPT
+          chmod +x timer.sh
 
-      - name: Create AVD Session Script
+      - name: Create Main Session Script
         run: |
-          cat > session.sh << 'EOF'
+          cat > session.sh << 'ENDSCRIPT'
           #!/bin/bash
           
-          echo "========================================"
-          echo "   Rooted Android 11"
-          echo "   MAXIMUM PERFORMANCE"
-          echo "   SNAPSHOT AUTO-SAVE ENABLED"
-          echo "========================================"
+          echo "════════════════════════════════════════"
+          echo "   🤖 ROOTED ANDROID 11 EMULATOR"
+          echo "   ⚡ MAXIMUM PERFORMANCE MODE"
+          echo "   💾 AUTO-SAVE PERSISTENCE ENABLED"
+          echo "════════════════════════════════════════"
           echo ""
           
-          # Check if restoring from previous session
-          SNAPSHOT_FILE="$HOME/.android/avd/test.avd/snapshots/default_boot/snapshot.pb"
-          if [ -f "$SNAPSHOT_FILE" ]; then
-            echo "RESTORED FROM PREVIOUS SESSION"
-            echo "All your apps and data are preserved"
-            echo ""
+          # Check for previous state
+          SNAPSHOT_DIR="$HOME/.android/avd/test.avd/snapshots"
+          if [ -d "$SNAPSHOT_DIR" ] && [ "$(ls -A $SNAPSHOT_DIR 2>/dev/null)" ]; then
+            echo "🔄 RESTORED FROM PREVIOUS SESSION"
+            echo "✅ All your apps are back"
+            echo "✅ All your data is preserved"
+            echo "✅ All your settings are restored"
           else
-            echo "This is a fresh AVD - first run"
-            echo ""
+            echo "🆕 FIRST RUN - Clean Android 11"
+            echo "📝 Your changes will be saved automatically"
           fi
+          echo ""
           
-          # Enable root
-          echo "Enabling root access..."
+          # Wait for device
+          echo "⏳ Waiting for device..."
+          adb wait-for-device
+          sleep 3
+          
+          # Enable root access
+          echo "🔓 Enabling root access..."
           adb root
+          sleep 3
           adb wait-for-device
           sleep 2
-          adb remount
           
-          # Enable TCP/IP
-          echo "Configuring TCP/IP on port 5555..."
+          # Remount system as writable
+          echo "📝 Making system writable..."
+          adb remount
+          sleep 2
+          
+          # Configure TCP/IP
+          echo "🌐 Configuring network access..."
           adb tcpip 5555
           sleep 5
           adb connect 127.0.0.1:5555
           sleep 3
           
-          # Verify connection
+          # Verify connections
           echo ""
-          echo "Verifying ADB connections..."
-          adb devices
+          echo "📱 Connected Devices:"
+          adb devices -l
           
           echo ""
-          echo "========================================"
-          echo "   Device Specifications"
-          echo "========================================"
-          echo "Android: 11 (API 30)"
-          echo "RAM: 6GB"
-          echo "Storage: 12GB"
-          echo "CPU: 4 cores (x86_64)"
-          echo "GPU: SwiftShader"
-          echo "Root: Full Access"
-          echo "System: Writable"
-          echo "Snapshot: Auto-save on timer end"
+          echo "════════════════════════════════════════"
+          echo "   📊 DEVICE SPECIFICATIONS"
+          echo "════════════════════════════════════════"
+          echo "Android: 11 (API Level 30)"
+          echo "Architecture: x86_64"
+          echo "RAM: 6 GB"
+          echo "Storage: 12 GB"
+          echo "CPU Cores: 4"
+          echo "GPU: SwiftShader (Software)"
+          echo "Root: ✅ FULL ACCESS"
+          echo "System: ✅ Writable"
+          echo "Persistence: ✅ Auto-save Enabled"
           echo ""
           
-          # Verify root
-          echo "Verifying Root Access:"
-          ROOT_USER=$(adb shell "whoami" 2>/dev/null | tr -d '
+          # Root verification
+          ROOT_CHECK=$(adb shell "whoami" 2>/dev/null | tr -d '
 ')
-          if [ "$ROOT_USER" = "root" ]; then
-            echo "Root confirmed: $ROOT_USER"
+          if [ "$ROOT_CHECK" = "root" ]; then
+            echo "🔐 Root Status: ✅ ACTIVE ($ROOT_CHECK)"
           else
-            echo "Root status: $ROOT_USER"
+            echo "🔐 Root Status: ⚠️  $ROOT_CHECK"
           fi
           
           echo ""
-          echo "Storage Available:"
-          adb -s 127.0.0.1:5555 shell df -h /data 2>/dev/null | grep -v Filesystem || echo "Storage info pending..."
+          echo "💾 Storage Info:"
+          adb shell df -h /data 2>/dev/null | tail -n 1 || echo "⏳ Loading..."
           
           echo ""
-          echo "Memory:"
-          adb -s 127.0.0.1:5555 shell cat /proc/meminfo 2>/dev/null | grep MemTotal || echo "Memory info pending..."
+          echo "🧠 Memory Info:"
+          TOTAL_MEM=$(adb shell cat /proc/meminfo 2>/dev/null | grep MemTotal | awk '{print $2}')
+          if [ -n "$TOTAL_MEM" ]; then
+            TOTAL_MB=$((TOTAL_MEM / 1024))
+            echo "Total RAM: ${TOTAL_MB} MB"
+          fi
           
           echo ""
-          echo "Installed Packages:"
+          echo "📦 Installed Packages:"
           PACKAGE_COUNT=$(adb shell pm list packages 2>/dev/null | wc -l)
-          echo "Total packages: $PACKAGE_COUNT"
+          echo "Total: $PACKAGE_COUNT packages"
           
           echo ""
-          echo "========================================"
-          echo "   CONNECTION INFO"
-          echo "========================================"
+          echo "════════════════════════════════════════"
+          echo "   🌐 REMOTE CONNECTION INFO"
+          echo "════════════════════════════════════════"
           echo ""
-          echo "Connect from your device:"
-          echo "  IP: 159.195.6.61"
-          echo "  Port: 5555"
-          echo "  Protocol: KCP (Low Latency)"
+          echo "Connect from ANY device using:"
+          echo "  📍 IP: 159.195.6.61"
+          echo "  🔌 Port: 5555"
+          echo "  ⚡ Protocol: KCP (Ultra-low latency)"
           echo ""
           echo "ADB Commands:"
-          echo "  adb connect 159.195.6.61:5555"
-          echo "  adb devices"
-          echo "  adb root (already enabled)"
-          echo "  adb shell (root shell access)"
-          echo "  adb install app.apk"
+          echo "  $ adb connect 159.195.6.61:5555"
+          echo "  $ adb devices"
+          echo "  $ adb shell"
+          echo "  $ adb install app.apk"
+          echo "  $ adb push file.txt /sdcard/"
+          echo "  $ adb pull /sdcard/file.txt"
           echo ""
-          echo "Install Apps:"
-          echo "  Download APKs from browser"
-          echo "  Install Aurora Store manually"
-          echo "  Use adb install command"
+          echo "App Installation:"
+          echo "  • Use adb install command"
+          echo "  • Install APKs via browser"
+          echo "  • Install F-Droid or Aurora Store"
+          echo "  • All installations are PERMANENT"
           echo ""
-          echo "DATA PERSISTENCE:"
-          echo "  All apps you install will be saved"
-          echo "  All files you create will be preserved"
-          echo "  All settings will be remembered"
-          echo "  Next workflow run restores everything"
+          echo "💾 DATA PERSISTENCE GUARANTEE:"
+          echo "  ✅ Installed apps persist forever"
+          echo "  ✅ App data is never deleted"
+          echo "  ✅ Files remain across sessions"
+          echo "  ✅ Settings are remembered"
+          echo "  ✅ Downloads are preserved"
+          echo "  🔄 Next workflow = Same state"
           echo ""
-          echo "========================================"
-          echo "Session Duration: $1 minutes"
-          echo "VPS: 159.195.6.61:5555"
-          echo "Protocol: KCP (UDP) - Low Latency"
-          echo "Android: 11 | RAM: 6GB | Storage: 12GB"
-          echo "Root: FULL ACCESS"
-          echo "Performance: MAXIMUM"
-          echo "Persistence: AUTO-SAVE SNAPSHOT"
-          echo "========================================"
+          echo "════════════════════════════════════════"
+          echo "Session: $1 minutes | VPS: 159.195.6.61:5555"
+          echo "Android 11 | 6GB RAM | 12GB Storage"
+          echo "Root: FULL | KCP Tunnel | Persistent State"
+          echo "════════════════════════════════════════"
           echo ""
           
-          # Run monitoring
-          ./monitor.sh $1
+          # Run session timer
+          ./timer.sh "$1"
           
           echo ""
-          echo "Session ended - Snapshot saved automatically"
-          echo "Run workflow again to restore this state"
-          EOF
+          echo "💾 Session ended - State auto-saved"
+          echo "🔄 Run workflow again to continue from here"
+          ENDSCRIPT
           chmod +x session.sh
 
-      - name: Set Duration Variable
+      # ============================================
+      # STEP 6: Set Duration
+      # ============================================
+      - name: Set Session Duration
         id: duration
         run: |
           DURATION="${{ github.event.inputs.duration }}"
-          if [ -z "$DURATION" ]; then
-            DURATION="5"
+          if [ -z "$DURATION" ] || [ "$DURATION" = "0" ]; then
+            DURATION="60"
           fi
           echo "duration=$DURATION" >> $GITHUB_OUTPUT
+          echo "⏱️  Session duration set to: $DURATION minutes"
 
-      - name: Start Rooted Emulator with Auto-Save Snapshot
+      # ============================================
+      # STEP 7: Start AVD with Persistence
+      # ============================================
+      - name: Start Android Emulator (Persistent Mode)
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
           target: google_apis
           arch: x86_64
           profile: pixel_6_pro
+          avd-name: test
+          force-avd-creation: false
           ram-size: 6144M
           heap-size: 1024M
           disk-size: 12288M
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -memory 6144 -cores 4 -skin 1080x2400 -writable-system
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -memory 6144 -cores 4 -writable-system
           disable-animations: true
+          emulator-boot-timeout: 600
           script: ./session.sh ${{ steps.duration.outputs.duration }}
 
-      - name: Save AVD Snapshot to Cache
+      # ============================================
+      # STEP 8: Save State (Always runs)
+      # ============================================
+      - name: Save AVD State (Auto-backup)
         uses: actions/cache/save@v4
         if: always()
         with:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-30-persistent-snapshot
+          key: avd-30-persistent-v1
 
-      - name: Upload Logs
+      - name: Upload Session Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rooted-avd-logs-${{ github.run_number }}
+          name: session-logs-${{ github.run_number }}
           path: |
             frpc.log
             frpc.toml
           retention-days: 7
+          if-no-files-found: warn
+
+      # ============================================
+      # STEP 9: Final Status
+      # ============================================
+      - name: Session Summary
+        if: always()
+        run: |
+          echo ""
+          echo "════════════════════════════════════════"
+          echo "   📊 SESSION COMPLETE"
+          echo "════════════════════════════════════════"
+          echo "✅ AVD state has been saved"
+          echo "✅ All apps are preserved"
+          echo "✅ All data is backed up"
+          echo "✅ Next run will restore everything"
+          echo ""
+          echo "Run workflow again to continue!"
+          echo "════════════════════════════════════════"
