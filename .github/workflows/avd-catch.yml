@@ -165,6 +165,113 @@ jobs:
           SCRIPT
           chmod +x monitor.sh
 
+      - name: Create AVD Session Script
+        run: |
+          cat > session.sh << 'SESSIONSCRIPT'
+          #!/bin/bash
+          
+          echo "========================================="
+          echo "   🚀 Rooted Android 11"
+          echo "   💪 MAXIMUM PERFORMANCE"
+          echo "   💽 SNAPSHOT AUTO-SAVE ENABLED"
+          echo "========================================="
+          echo ""
+          
+          # Check if restoring from previous session
+          if [ -f "$HOME/.android/avd/test.avd/snapshots/default_boot/snapshot.pb" ]; then
+            echo "🔄 Restored from previous session!"
+            echo "📦 All your apps and data are preserved"
+            echo ""
+          else
+            echo "🆕 This is a fresh AVD - no previous snapshot found"
+            echo ""
+          fi
+          
+          # Enable root
+          adb root
+          adb wait-for-device
+          adb remount
+          
+          # Enable TCP/IP
+          adb tcpip 5555
+          sleep 5
+          adb connect 127.0.0.1:5555
+          sleep 2
+          
+          echo ""
+          echo "========================================="
+          echo "   📱 Device Specifications"
+          echo "========================================="
+          echo "Android: 11 (API 30)"
+          echo "RAM: 6GB"
+          echo "Storage: 12GB"
+          echo "CPU: 4 cores (x86_64)"
+          echo "GPU: SwiftShader (software rendering)"
+          echo "Root: ✅ Full Access"
+          echo "System: Writable"
+          echo "Snapshot: ✅ Auto-save on timer end"
+          echo ""
+          
+          # Verify root
+          echo "🔐 Root Access:"
+          adb shell "whoami"
+          
+          echo ""
+          echo "💾 Storage Available:"
+          adb -s 127.0.0.1:5555 shell df -h /data | grep -v Filesystem
+          
+          echo ""
+          echo "🧠 Memory:"
+          adb -s 127.0.0.1:5555 shell cat /proc/meminfo | grep MemTotal
+          
+          echo ""
+          echo "========================================="
+          echo "   🌐 CONNECTION INFO"
+          echo "========================================="
+          echo ""
+          echo "📱 Connect from your device:"
+          echo "   • IP: 159.195.6.61"
+          echo "   • Port: 5555"
+          echo "   • Protocol: KCP (Low Latency)"
+          echo ""
+          echo "💻 ADB Commands:"
+          echo "   adb connect 159.195.6.61:5555"
+          echo "   adb devices"
+          echo "   adb root (already enabled)"
+          echo "   adb shell (root shell access)"
+          echo "   adb install app.apk"
+          echo ""
+          echo "📦 Install Apps:"
+          echo "   • Download APKs from browser"
+          echo "   • Install Aurora Store manually"
+          echo "   • Use adb install command"
+          echo ""
+          echo "💽 DATA PERSISTENCE:"
+          echo "   ✅ All apps you install will be saved"
+          echo "   ✅ All files you create will be preserved"
+          echo "   ✅ All settings will be remembered"
+          echo "   ✅ Next workflow run restores everything"
+          echo ""
+          echo "========================================="
+          echo "⏱️  Session Duration: $1 minutes"
+          echo "VPS: 159.195.6.61:5555"
+          echo "Protocol: KCP (UDP) - 30-40% Lower Latency"
+          echo "Android: 11 | RAM: 6GB | Storage: 12GB"
+          echo "Root: ✅ FULL ACCESS"
+          echo "Performance: 🚀 MAXIMUM"
+          echo "Persistence: 💽 AUTO-SAVE SNAPSHOT"
+          echo "========================================="
+          echo ""
+          
+          # Run monitoring
+          ./monitor.sh $1
+          
+          echo ""
+          echo "💾 Preparing to save snapshot..."
+          echo "⏳ Please wait for emulator to close properly..."
+          SESSIONSCRIPT
+          chmod +x session.sh
+
       - name: Start Rooted Emulator with Auto-Save Snapshot
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -177,105 +284,7 @@ jobs:
           disk-size: 12288M
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -memory 6144 -cores 4 -skin 1080x2400 -writable-system
           disable-animations: true
-          script: |
-            echo "========================================="
-            echo "   🚀 Rooted Android 11"
-            echo "   💪 MAXIMUM PERFORMANCE"
-            echo "   💽 SNAPSHOT AUTO-SAVE ENABLED"
-            echo "========================================="
-            echo ""
-            
-            # Check if restoring from previous session
-            SNAPSHOT_FILE="$HOME/.android/avd/test.avd/snapshots/default_boot/snapshot.pb"
-            if [ -f "$SNAPSHOT_FILE" ]; then
-              echo "🔄 Restored from previous session!"
-              echo "📦 All your apps and data are preserved"
-              echo ""
-            else
-              echo "🆕 This is a fresh AVD - no previous snapshot found"
-              echo ""
-            fi
-            
-            # Enable root
-            adb root
-            adb wait-for-device
-            adb remount
-            
-            # Enable TCP/IP
-            adb tcpip 5555
-            sleep 5
-            adb connect 127.0.0.1:5555
-            sleep 2
-            
-            echo ""
-            echo "========================================="
-            echo "   📱 Device Specifications"
-            echo "========================================="
-            echo "Android: 11 (API 30)"
-            echo "RAM: 6GB"
-            echo "Storage: 12GB"
-            echo "CPU: 4 cores (x86_64)"
-            echo "GPU: SwiftShader (software rendering)"
-            echo "Root: ✅ Full Access"
-            echo "System: Writable"
-            echo "Snapshot: ✅ Auto-save on timer end"
-            echo ""
-            
-            # Verify root
-            echo "🔐 Root Access:"
-            adb shell "whoami"
-            
-            echo ""
-            echo "💾 Storage Available:"
-            adb -s 127.0.0.1:5555 shell df -h /data | grep -v Filesystem
-            
-            echo ""
-            echo "🧠 Memory:"
-            adb -s 127.0.0.1:5555 shell cat /proc/meminfo | grep MemTotal
-            
-            echo ""
-            echo "========================================="
-            echo "   🌐 CONNECTION INFO"
-            echo "========================================="
-            echo ""
-            echo "📱 Connect from your device:"
-            echo "   • IP: 159.195.6.61"
-            echo "   • Port: 5555"
-            echo "   • Protocol: KCP (Low Latency)"
-            echo ""
-            echo "💻 ADB Commands:"
-            echo "   adb connect 159.195.6.61:5555"
-            echo "   adb devices"
-            echo "   adb root (already enabled)"
-            echo "   adb shell (root shell access)"
-            echo "   adb install app.apk"
-            echo ""
-            echo "📦 Install Apps:"
-            echo "   • Download APKs from browser"
-            echo "   • Install Aurora Store manually"
-            echo "   • Use adb install command"
-            echo ""
-            echo "💽 DATA PERSISTENCE:"
-            echo "   ✅ All apps you install will be saved"
-            echo "   ✅ All files you create will be preserved"
-            echo "   ✅ All settings will be remembered"
-            echo "   ✅ Next workflow run restores everything"
-            echo ""
-            echo "========================================="
-            echo "⏱️  Session Duration: ${{ github.event.inputs.duration }} minutes"
-            echo "VPS: 159.195.6.61:5555"
-            echo "Protocol: KCP (UDP) - 30-40% Lower Latency"
-            echo "Android: 11 | RAM: 6GB | Storage: 12GB"
-            echo "Root: ✅ FULL ACCESS"
-            echo "Performance: 🚀 MAXIMUM"
-            echo "Persistence: 💽 AUTO-SAVE SNAPSHOT"
-            echo "========================================="
-            echo ""
-            ./monitor.sh ${{ github.event.inputs.duration }}
-            
-            echo ""
-            echo "💾 Preparing to save snapshot..."
-            echo "⏳ Please wait for emulator to close properly..."
+          script: ./session.sh ${{ github.event.inputs.duration }}
 
       - name: Save AVD Snapshot to Cache
         uses: actions/cache/save@v4
