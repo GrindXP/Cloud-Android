@@ -1,4 +1,4 @@
-name: Rooted Android 11 - Maximum Performance + KCP
+name: avd-andr11
 
 on:
   workflow_dispatch:
