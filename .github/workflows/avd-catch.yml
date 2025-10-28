@@ -1,54 +1,27 @@
-name: Rooted Android 11 Emulator (Persistent)
+name: avd-andr11
 
 on:
   workflow_dispatch:
     inputs:
       duration:
-        description: "Session duration in minutes (1-360)"
-        type: number
+        description: 'Session duration in minutes (1–360)'
         required: false
-        default: 5
+        default: '5'
 
 jobs:
-  emulator:
+  run-emulator:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-    permissions:
-      contents: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Free disk space
-        shell: bash
+      - name: Enable KVM (hardware accel)
         run: |
-          set -euxo pipefail
-          echo "[cleanup] Before:"
-          df -h
-          # Remove large preinstalled SDKs and toolchains not needed for this session
-          sudo rm -rf /usr/share/dotnet || true
-          sudo rm -rf /opt/ghc || true
-          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
-          sudo rm -rf /usr/local/share/boost || true
-          # Optional: remove prebundled Android to re-install fresh SDK with setup-android
-          sudo rm -rf /usr/local/lib/android || true
-          # Prune Docker images and builders
-          sudo docker image prune -af || true
-          sudo docker builder prune -af || true
-          echo "[cleanup] After:"
-          df -h
-
-      - name: Enable KVM acceleration
-        shell: bash
-        run: |
-          set -euxo pipefail
-          # Grant /dev/kvm access to all users on the runner
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-          # Verify /dev/kvm presence (hardware acceleration availability depends on host)
-          ls -al /dev/kvm || true
 
       - name: Set up JDK 17 (Temurin)
         uses: actions/setup-java@v4
@@ -56,12 +29,51 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install Android SDK (cmdline tools + platform-tools)
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Restore AVD + ADB cache (persistent)
-        id: avd-restore
-        uses: actions/cache@v4
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune -a -f || true
+          sudo apt-get clean
+          df -h
+
+      - name: Install FRP client v0.58.1
+        run: |
+          wget -q https://github.com/fatedier/frp/releases/download/v0.58.1/frp_0.58.1_linux_amd64.tar.gz
+          tar -xzf frp_0.58.1_linux_amd64.tar.gz
+          sudo install -m 0755 frp_0.58.1_linux_amd64/frpc /usr/local/bin/frpc
+          rm -rf frp_0.58.1_linux_amd64*
+
+      - name: Configure FRP (KCP) and start
+        run: |
+          cat > frpc.toml << 'EOF'
+          serverAddr = "159.195.6.61"
+          serverPort = 7000
+          transport.protocol = "kcp"
+
+          [[proxies]]
+          name = "github-avd-adb"
+          type = "tcp"
+          localIP = "127.0.0.1"
+          localPort = 5555
+          remotePort = 5555
+
+          [[proxies]]
+          name = "github-avd-console"
+          type = "tcp"
+          localIP = "127.0.0.1"
+          localPort = 5554
+          remotePort = 5554
+          EOF
+          nohup frpc -c frpc.toml > frpc.log 2>&1 &
+          sleep 3
+          pgrep -x frpc >/dev/null && echo "frpc running" || (echo "frpc failed" && exit 1)
+
+      - name: Restore persistent AVD cache
+        uses: actions/cache/restore@v4
+        id: avd-cache
         with:
           path: |
             ~/.android/avd
@@ -70,170 +82,69 @@ jobs:
           restore-keys: |
             avd-30-persistent-v1
 
-      - name: Install FRP client 0.58.1
-        shell: bash
+      - name: Create timer.sh
         run: |
-          set -euxo pipefail
-          FRP_VER=0.58.1
-          curl -L -o frp_${FRP_VER}_linux_amd64.tar.gz https://github.com/fatedier/frp/releases/download/v${FRP_VER}/frp_${FRP_VER}_linux_amd64.tar.gz
-          tar -xzf frp_${FRP_VER}_linux_amd64.tar.gz
-          sudo mv frp_${FRP_VER}_linux_amd64/frpc /usr/local/bin/frpc
-          frpc -v
-
-      - name: Configure and start FRP (KCP tunnel)
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p frp
-          cat > frp/frpc.toml <<'EOF'
-          # frpc client config (KCP over UDP)
-          serverAddr = "159.195.6.61"
-          serverPort = 7000
-
-          [transport]
-          protocol = "kcp"
-
-          [[proxies]]
-          name = "adb-5555"
-          type = "tcp"
-          localIP = "127.0.0.1"
-          localPort = 5555
-          remotePort = 5555
-
-          [[proxies]]
-          name = "emu-console-5554"
-          type = "tcp"
-          localIP = "127.0.0.1"
-          localPort = 5554
-          remotePort = 5554
-          EOF
-
-          # Start frpc in background and verify it stays up
-          nohup frpc -c frp/frpc.toml > frp/frpc.log 2>&1 &
-          sleep 2
-          if ! pgrep -f "frpc -c frp/frpc.toml" >/dev/null; then
-            echo "[frp] frpc failed to start"
-            tail -n +1 frp/frpc.log || true
-            exit 1
-          fi
-          echo "[frp] frpc running (KCP)."
-
-      - name: Create session scripts
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p scripts
-
-          # Timer script: counts down and checks health every 10s
-          cat > scripts/timer.sh <<'EOF'
+          cat > timer.sh << 'EOF'
           #!/usr/bin/env bash
           set -euo pipefail
-
           MIN="${1:-5}"
-          # Clamp to [1, 360]
-          if ! [[ "$MIN" =~ ^[0-9]+$ ]]; then MIN=5; fi
-          if (( MIN < 1 )); then MIN=1; fi
-          if (( MIN > 360 )); then MIN=360; fi
-
-          SECS=$(( MIN * 60 ))
-          start_ts=$(date +%s)
-          echo "[timer] Session duration: ${MIN} minute(s)"
-
-          while true; do
-            now=$(date +%s)
-            elapsed=$(( now - start_ts ))
-            remaining=$(( SECS - elapsed ))
-            if (( remaining <= 0 )); then
-              echo "[timer] Session time complete."
-              exit 0
+          [[ "$MIN" =~ ^[0-9]+$ ]] || MIN=5
+          (( MIN<1 )) && MIN=1
+          (( MIN>360 )) && MIN=360
+          TOTAL=$(( MIN*60 ))
+          for ((s=0;s<TOTAL;s++)); do
+            if (( s % 10 == 0 )); then
+              DEV=$(adb devices | awk '/5555.*device/{c++} END{print c+0}' || echo 0)
+              pgrep -x frpc >/dev/null && ST=OK || ST=DOWN
+              echo "[timer] ${s}/${TOTAL}s | adb:${DEV} | frp:${ST}"
             fi
-            printf "[timer] Remaining: %dm %ds
-" $(( remaining/60 )) $(( remaining%60 ))
-
-            # Health checks (don’t fail the timer)
-            adb devices || true
-            if pgrep -f "frpc -c frp/frpc.toml" >/dev/null; then
-              echo "[timer] FRP: OK"
-            else
-              echo "[timer] FRP: DOWN"
-            fi
-            sleep 10
+            sleep 1
           done
+          echo "[timer] done"
           EOF
-          chmod +x scripts/timer.sh
+          chmod +x timer.sh
 
-          # Main session script: root, writable system, tcpip, forward, info, then run timer
-          cat > scripts/session.sh <<'EOF'
+      - name: Create session.sh
+        run: |
+          cat > session.sh << 'EOF'
           #!/usr/bin/env bash
           set -euo pipefail
+          DUR="${1:-5}"
+          [[ "$DUR" =~ ^[0-9]+$ ]] || DUR=5
+          (( DUR<1 )) && DUR=1
+          (( DUR>360 )) && DUR=360
 
-          MIN="${1:-5}"
-          # Clamp input to [1,360]
-          if ! [[ "$MIN" =~ ^[0-9]+$ ]]; then MIN=5; fi
-          if (( MIN < 1 )); then MIN=1; fi
-          if (( MIN > 360 )); then MIN=360; fi
-
-          EMUPORT="${EMULATOR_PORT:-5554}"
-          SERIAL="emulator-${EMUPORT}"
-
-          echo "[session] Waiting for device ${SERIAL}..."
-          adb -s "${SERIAL}" wait-for-device
-
-          echo "[session] Disabling animations..."
-          adb -s "${SERIAL}" shell settings put global window_animation_scale 0 || true
-          adb -s "${SERIAL}" shell settings put global transition_animation_scale 0 || true
-          adb -s "${SERIAL}" shell settings put global animator_duration_scale 0 || true
-
-          echo "[session] Enabling root & remounting system as writable..."
-          adb -s "${SERIAL}" root || true
+          # Wait, root, remount (writable system), enable tcpip 5555 and connect locally
+          adb wait-for-device
+          adb root || true
+          adb wait-for-device
+          adb remount || true
+          adb tcpip 5555 || true
           sleep 2
-          adb -s "${SERIAL}" remount || true
+          adb connect 127.0.0.1:5555 || true
+          sleep 1
+          echo "[session] adb devices:"
+          adb devices
 
-          echo "[session] Enabling ADB over TCP/IP on port 5555..."
-          adb -s "${SERIAL}" tcpip 5555 || true
-          sleep 2
+          # Basic info (best-effort)
+          echo "[session] specs:"
+          echo -n "Android: "; adb shell getprop ro.build.version.release || true
+          echo -n "ABIs:    "; adb shell getprop ro.product.cpu.abilist || true
+          echo -n "Model:   "; adb shell getprop ro.product.model || true
+          adb shell 'grep -m1 MemTotal /proc/meminfo' || true
+          adb shell 'df -h /data | tail -n +2' || true
+          echo -n "whoami:  "; adb shell whoami 2>/dev/null | tr -d '
+' || true
+          echo -n "packages:"; adb shell 'pm list packages 2>/dev/null | wc -l' || true
 
-          echo "[session] Forwarding host tcp:5555 -> device tcp:5555 for remote ADB tunneling..."
-          # This creates a listener on 127.0.0.1:5555 on the host that forwards to adbd on the emulator
-          adb -s "${SERIAL}" forward tcp:5555 tcp:5555 || true
+          echo "[session] tunnel: 159.195.6.61:5555 (FRP KCP)"
 
-          # Device info
-          ANDROID=$(adb -s "${SERIAL}" shell getprop ro.build.version.release | tr -d '
-' || echo "unknown")
-          SDK=$(adb -s "${SERIAL}" shell getprop ro.build.version.sdk | tr -d '
-' || echo "unknown")
-          RAM=$(adb -s "${SERIAL}" shell grep MemTotal /proc/meminfo | tr -d '
-' || true)
-          STORAGE=$(adb -s "${SERIAL}" shell sh -c "df -h /data | tail -1 | awk '{print $2" total, "$4" free"}'" | tr -d '
-' || true)
-          CORES=$(adb -s "${SERIAL}" shell nproc 2>/dev/null | tr -d '
-' || echo "unknown")
-          ROOTID=$(adb -s "${SERIAL}" shell id | tr -d '
-' || true)
-          PKGS=$(adb -s "${SERIAL}" shell pm list packages | wc -l | tr -d '
-' || echo "0")
+          # Keep emulator up for requested duration
+          ./timer.sh "$DUR"
 
-          echo "================= Emulator Details ================="
-          echo "Device:         ${SERIAL}"
-          echo "Android:        ${ANDROID} (SDK ${SDK})"
-          echo "CPU cores:      ${CORES}"
-          echo "RAM:            ${RAM}"
-          echo "Data storage:   ${STORAGE}"
-          echo "Root status:    ${ROOTID}"
-          echo "Packages:       ${PKGS}"
-          echo "===================================================="
-          echo "Remote access:"
-          echo "  - ADB:     adb connect 159.195.6.61:5555"
-          echo "  - Console: telnet 159.195.6.61 5554"
-          echo "Notes:"
-          echo "  - System partition is writable (use caution when modifying /system)."
-          echo "  - All AVD state (apps, data, settings) persists via cache between runs."
-          echo "  - Session will remain available for ${MIN} minute(s)."
-
-          # Keep the emulator available until the timer exits
-          bash scripts/timer.sh "${MIN}"
+          echo "[session] finished"
           EOF
-          chmod +x scripts/session.sh
+          chmod +x session.sh
 
       - name: Start rooted Android 11 emulator (persistent)
         uses: reactivecircus/android-emulator-runner@v2
@@ -242,34 +153,31 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_6_pro
-          avd-name: persistent-avd-30
-          force-avd-creation: false
-          # Memory and storage configuration
+          avd-name: test
           ram-size: 6144M
           heap-size: 1024M
-          disk-size: 12G
-          # Boot configuration
+          disk-size: 12288M
+          force-avd-creation: false
           emulator-boot-timeout: 600
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -writable-system
-          # Run the session script for the requested duration
-          script: bash scripts/session.sh "${{ inputs.duration }}"
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+          script: ./session.sh "${{ github.event.inputs.duration }}"
 
-      - name: Save AVD + ADB cache (always)
-        if: always()
+      - name: Save persistent AVD cache (always)
         uses: actions/cache/save@v4
+        if: always()
         with:
           path: |
             ~/.android/avd
             ~/.android/adb*
           key: avd-30-persistent-v1
-          # Note: static key requested; this step runs even on failure/cancel
 
-      - name: Upload FRP logs and config (7 days)
+      - name: Upload FRP logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: frp-logs-and-config
-          path: frp
+          name: frp-logs
+          path: |
+            frpc.log
+            frpc.toml
           retention-days: 7
-          if-no-files-found: warn
