@@ -39,10 +39,13 @@ jobs:
           sudo apt-get clean
           df -h
 
-      - name: Install libpulse (required for emulator)
+      - name: Install GUI and emulator dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpulse0
+          sudo apt-get install -y libpulse0 \
+            libxcb-xinerama0 libxcb-cursor0 libxkbcommon-x11-0 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 \
+            xvfb unzip wget
 
       - name: Install FRP client v0.58.1
         run: |
@@ -99,109 +102,36 @@ jobs:
           restore-keys: |
             avd-30-persistent-v1-
 
-      - name: Create timer.sh
-        shell: bash
+      - name: Create and launch emulator with GUI
         run: |
-          cat <<'EOF' > timer.sh
-          #!/usr/bin/env bash
-          set -euo pipefail
-          MIN="${1:-5}"
-          [[ "$MIN" =~ ^[0-9]+$ ]] || MIN=5
-          (( MIN<1 )) && MIN=1
-          (( MIN>360 )) && MIN=360
-          TOTAL=$(( MIN*60 ))
-          for ((s=0;s<TOTAL;s++)); do
-            if (( s % 10 == 0 )); then
-              DEV=$(adb devices | awk '/5555.*device/{c++} END{print c+0}' || echo 0)
-              pgrep -x frpc >/dev/null && ST=OK || ST=DOWN
-              echo "[timer] ${s}/${TOTAL}s | adb:${DEV} | frp:${ST}"
+          echo "no" | avdmanager create avd -n test -k "system-images;android-30;google_apis;x86_64" -d pixel_xl || true
+          echo "hw.ramSize=6144" >> ~/.android/avd/test.avd/config.ini
+          echo "hw.heapSize=1024" >> ~/.android/avd/test.avd/config.ini
+          echo "disk.dataPartition.size=12288M" >> ~/.android/avd/test.avd/config.ini
+
+          nohup xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' \
+          emulator -avd test -gpu host -camera-back emulated -camera-front emulated \
+          -noaudio -no-boot-anim -verbose > emulator.log 2>&1 &
+
+          echo "Waiting for emulator to boot..."
+          for i in {1..60}; do
+            boot_status=$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+            if [[ "$boot_status" == "1" ]]; then
+              echo "Emulator booted successfully"
+              break
             fi
-            sleep 1
+            sleep 5
           done
-          echo "[timer] done"
-          EOF
-          chmod +x timer.sh
 
-      - name: Create session.sh
-        shell: bash
-        run: |
-          cat <<'EOF' > session.sh
-          #!/usr/bin/env bash
-          set -euo pipefail
-          DUR="${1:-5}"
-          [[ "$DUR" =~ ^[0-9]+$ ]] || DUR=5
-          (( DUR<1 )) && DUR=1
-          (( DUR>360 )) && DUR=360
-
-          adb kill-server || true
-          adb wait-for-device
-          adb root || true
-          adb wait-for-device
-          adb remount || true
-          adb tcpip 5555 || true
+          adb tcpip 5555
           sleep 2
+          adb connect 127.0.0.1:5555 || true
+          adb devices
 
-          for i in {1..5}; do
-            adb connect 127.0.0.1:5555 && break
-            sleep 2
-          done
-
-          echo "[session] adb devices:"; adb devices
-          echo -n "Android: "; adb shell getprop ro.build.version.release || true
-          echo -n "ABIs:    "; adb shell getprop ro.product.cpu.abilist || true
-          echo -n "Model:   "; adb shell getprop ro.product.model || true
-          adb shell 'grep -m1 MemTotal /proc/meminfo' || true
-          adb shell 'df -h /data | tail -n +2' || true
-          echo -n "whoami:  "; adb shell whoami 2>/dev/null | tr -d '\n' || true
-          echo -n "packages:"; adb shell 'pm list packages 2>/dev/null | wc -l' || true
-
-          echo "[session] tunnel: 159.195.6.61:5555 (FRP KCP)"
-          ./timer.sh "$DUR"
-          echo "[session] finished"
-          EOF
-          chmod +x session.sh
-
-      - name: Start rooted Android 11 emulator (persistent)
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 30
-          target: google_apis
-          arch: x86_64
-          profile: pixel_xl
-          avd-name: test
-          ram-size: 6144M
-          heap-size: 1024M
-          disk-size: 12288M
-          force-avd-creation: false
-          emulator-boot-timeout: 600
-          disable-animations: true
-          emulator-options: -gpu host -camera-back emulated -camera-front emulated -noaudio -no-boot-anim
-          script: ./session.sh "${{ inputs.duration }}"
-
-      - name: Save persistent AVD cache (primary)
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.android/avd
-            ~/.android/adb*
-          key: avd-30-persistent-v1-${{ github.run_id }}
-
-      - name: Save persistent AVD cache (fallback)
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.android/avd
-            ~/.android/adb*
-          key: avd-30-persistent-v1-fallback-${{ github.run_id }}
-
-      - name: Upload FRP logs
+      - name: Upload emulator logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: frp-logs
-          path: |
-            frpc.log
-            frpc.toml
+          name: emulator-logs
+          path: emulator.log
           retention-days: 7
