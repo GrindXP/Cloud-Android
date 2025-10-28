@@ -41,14 +41,15 @@ jobs:
 
       - name: Install FRP client v0.58.1
         run: |
-          wget -q https://github.com/fatedier/frp/releases/download/v0.58.1/frp_0.58.1_linux_amd64.tar.gz
-          tar -xzf frp_0.58.1_linux_amd64.tar.gz
-          sudo install -m 0755 frp_0.58.1_linux_amd64/frpc /usr/local/bin/frpc
-          rm -rf frp_0.58.1_linux_amd64*
+          wget -q https://github.com/fatedier/frp/releases/download/v0.58.1/frp0.58.1linux_amd64.tar.gz
+          tar -xzf frp0.58.1linux_amd64.tar.gz
+          sudo install -m 0755 frp0.58.1linux_amd64/frpc /usr/local/bin/frpc
+          rm -rf frp0.58.1linux_amd64*
 
       - name: Configure FRP (KCP) and start
+        shell: bash
         run: |
-          cat > frpc.toml << 'EOF'
+          cat > frpc.toml <<'EOF'
           serverAddr = "159.195.6.61"
           serverPort = 7000
           transport.protocol = "kcp"
@@ -68,12 +69,16 @@ jobs:
           remotePort = 5554
           EOF
           nohup frpc -c frpc.toml > frpc.log 2>&1 &
-          sleep 3
+          for i in {1..5}; do
+            pgrep -x frpc && break
+            sleep 1
+          done
           pgrep -x frpc >/dev/null && echo "frpc running" || (echo "frpc failed" && exit 1)
 
       - name: Restore persistent AVD cache
         uses: actions/cache/restore@v4
         id: avd-cache
+        continue-on-error: true
         with:
           path: |
             ~/.android/avd
@@ -83,8 +88,9 @@ jobs:
             avd-30-persistent-v1
 
       - name: Create timer.sh
+        shell: bash
         run: |
-          cat > timer.sh << 'EOF'
+          cat > timer.sh <<'EOF'
           #!/usr/bin/env bash
           set -euo pipefail
           MIN="${1:-5}"
@@ -105,8 +111,9 @@ jobs:
           chmod +x timer.sh
 
       - name: Create session.sh
+        shell: bash
         run: |
-          cat > session.sh << 'EOF'
+          cat > session.sh <<'EOF'
           #!/usr/bin/env bash
           set -euo pipefail
           DUR="${1:-5}"
@@ -114,7 +121,7 @@ jobs:
           (( DUR<1 )) && DUR=1
           (( DUR>360 )) && DUR=360
 
-          # Wait, root, remount (writable system), enable tcpip 5555 and connect locally
+          adb kill-server || true
           adb wait-for-device
           adb root || true
           adb wait-for-device
@@ -123,25 +130,18 @@ jobs:
           sleep 2
           adb connect 127.0.0.1:5555 || true
           sleep 1
-          echo "[session] adb devices:"
-          adb devices
+          echo "[session] adb devices:"; adb devices
 
-          # Basic info (best-effort)
-          echo "[session] specs:"
           echo -n "Android: "; adb shell getprop ro.build.version.release || true
           echo -n "ABIs:    "; adb shell getprop ro.product.cpu.abilist || true
           echo -n "Model:   "; adb shell getprop ro.product.model || true
           adb shell 'grep -m1 MemTotal /proc/meminfo' || true
           adb shell 'df -h /data | tail -n +2' || true
-          echo -n "whoami:  "; adb shell whoami 2>/dev/null | tr -d '
-' || true
+          echo -n "whoami:  "; adb shell whoami 2>/dev/null | tr -d '\n' || true
           echo -n "packages:"; adb shell 'pm list packages 2>/dev/null | wc -l' || true
 
           echo "[session] tunnel: 159.195.6.61:5555 (FRP KCP)"
-
-          # Keep emulator up for requested duration
           ./timer.sh "$DUR"
-
           echo "[session] finished"
           EOF
           chmod +x session.sh
@@ -152,7 +152,7 @@ jobs:
           api-level: 30
           target: google_apis
           arch: x86_64
-          profile: pixel_6_pro
+          profile: pixel6pro
           avd-name: test
           ram-size: 6144M
           heap-size: 1024M
@@ -161,11 +161,11 @@ jobs:
           emulator-boot-timeout: 600
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
-          script: ./session.sh "${{ github.event.inputs.duration }}"
+          script: ./session.sh "${{ inputs.duration }}"
 
       - name: Save persistent AVD cache (always)
-        uses: actions/cache/save@v4
         if: always()
+        uses: actions/cache/save@v4
         with:
           path: |
             ~/.android/avd
