@@ -46,11 +46,24 @@ jobs:
 
       - name: Create Optimized AVD
         run: |
+          echo "Creating AVD..."
           echo "no" | avdmanager create avd -n test \
             -k "system-images;android-30;google_apis;x86_64" \
             -d pixel_xl --force
           
-          cat <<EOF >> ~/.android/avd/test.avd/config.ini
+          echo "Waiting for AVD creation..."
+          sleep 2
+          
+          echo "Verifying AVD directory..."
+          ls -la ~/.android/avd/
+          
+          if [ ! -d ~/.android/avd/test.avd ]; then
+            echo "Error: AVD directory was not created!"
+            exit 1
+          fi
+          
+          echo "AVD created successfully. Adding optimizations..."
+          cat >> ~/.android/avd/test.avd/config.ini << 'EOFCONFIG'
           hw.ramSize=4096
           hw.heapSize=512
           disk.dataPartition.size=8192M
@@ -59,10 +72,14 @@ jobs:
           hw.lcd.density=240
           hw.lcd.width=720
           hw.lcd.height=1280
-          EOF
+          EOFCONFIG
+          
+          echo "Configuration applied. Last 10 lines:"
+          tail -10 ~/.android/avd/test.avd/config.ini
 
       - name: Start Emulator
         run: |
+          echo "Starting Android emulator..."
           nohup xvfb-run --auto-servernum --server-args='-screen 0 720x1280x24' \
             emulator -avd test \
             -gpu swiftshader_indirect \
@@ -73,24 +90,34 @@ jobs:
             -netspeed full \
             -verbose > emulator.log 2>&1 &
           
-          echo "Waiting for emulator..."
-          timeout 180 adb wait-for-device || exit 1
+          echo "Waiting for emulator device..."
+          timeout 180 adb wait-for-device || {
+            echo "Emulator failed to start!"
+            cat emulator.log
+            exit 1
+          }
           
-          echo "Waiting for boot completion..."
+          echo "Device detected. Waiting for boot completion..."
           for i in {1..60}; do
             STATUS=$(adb shell getprop sys.boot_completed 2>/dev/null)
             CLEAN=$(echo "$STATUS" | tr -d '[:space:]')
             if [ "$CLEAN" = "1" ]; then
-              echo "Emulator booted successfully"
+              echo "Emulator booted successfully in $((i*2)) seconds"
               break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "Boot timeout!"
+              exit 1
             fi
             sleep 2
           done
           
+          echo "Applying optimizations..."
           adb shell settings put global window_animation_scale 0
           adb shell settings put global transition_animation_scale 0
           adb shell settings put global animator_duration_scale 0
           
+          echo "Emulator is ready!"
           adb devices
 
       - name: Setup WebRTC Client
@@ -129,6 +156,7 @@ jobs:
           
           if pgrep -f "webrtc-client.js" > /dev/null; then
             echo "WebRTC client started successfully"
+            cat webrtc-client.log
           else
             echo "Failed to start WebRTC client"
             cat webrtc-client.log
@@ -189,7 +217,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: logs-${{ github.run_number }}
+          name: emulator-logs-${{ github.run_number }}
           path: |
             emulator.log
             webrtc-client.log
