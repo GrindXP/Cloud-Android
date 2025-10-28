@@ -7,6 +7,7 @@ on:
         description: 'Session duration in minutes (max 360)'
         required: false
         default: '5'
+        type: string
 
 jobs:
   run-emulator:
@@ -80,9 +81,9 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-30-data-v1-${{ github.run_number }}
+          key: avd-30-persistent-snapshot
           restore-keys: |
-            avd-30-data-v1-
+            avd-30-persistent-snapshot
 
       - name: Start FRP KCP Tunnel
         run: |
@@ -271,6 +272,15 @@ jobs:
           EOF
           chmod +x session.sh
 
+      - name: Set Duration Variable
+        id: duration
+        run: |
+          DURATION="${{ github.event.inputs.duration }}"
+          if [ -z "$DURATION" ]; then
+            DURATION="5"
+          fi
+          echo "duration=$DURATION" >> $GITHUB_OUTPUT
+
       - name: Start Rooted Emulator with Auto-Save Snapshot
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -283,7 +293,7 @@ jobs:
           disk-size: 12288M
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -memory 6144 -cores 4 -skin 1080x2400 -writable-system
           disable-animations: true
-          script: ./session.sh ${{ github.event.inputs.duration }}
+          script: ./session.sh ${{ steps.duration.outputs.duration }}
 
       - name: Save AVD Snapshot to Cache
         uses: actions/cache/save@v4
@@ -292,7 +302,7 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-30-data-v1-${{ github.run_number }}
+          key: avd-30-persistent-snapshot
 
       - name: Upload Logs
         if: always()
