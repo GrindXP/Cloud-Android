@@ -1,4 +1,4 @@
-name: Android 11 AVD - Level 2 WebRTC
+name: Android 11 AVD - WebRTC via VPS
 
 on:
   workflow_dispatch:
@@ -10,21 +10,18 @@ on:
 
 jobs:
   run-emulator:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 360
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: System Info
+      - name: Enable KVM
         run: |
-          echo "=========================================="
-          echo "Runner: $(hostname)"
-          echo "IP: $(curl -s ifconfig.me)"
-          echo "CPU: $(nproc) cores"
-          echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
-          echo "=========================================="
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -35,18 +32,24 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Accept Licenses & Install System Image
+      - name: Accept Licenses and Install System Image
         run: |
           yes | sdkmanager --licenses || true
           sdkmanager --install "system-images;android-30;google_apis;x86_64"
           sdkmanager --install "platform-tools" "emulator"
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpulse0 libxcb-xinerama0 libxcb-cursor0 \
+            libxkbcommon-x11-0 xvfb nodejs npm
 
       - name: Create Optimized AVD
         run: |
           echo "no" | avdmanager create avd -n test \
             -k "system-images;android-30;google_apis;x86_64" \
             -d pixel_xl --force
-
+          
           cat <<EOF >> ~/.android/avd/test.avd/config.ini
           hw.ramSize=4096
           hw.heapSize=512
@@ -62,99 +65,125 @@ jobs:
         run: |
           nohup xvfb-run --auto-servernum --server-args='-screen 0 720x1280x24' \
             emulator -avd test \
-            -gpu host \
+            -gpu swiftshader_indirect \
             -no-audio \
             -no-boot-anim \
             -no-snapshot \
             -netdelay none \
             -netspeed full \
-            -grpc 8554 \
             -verbose > emulator.log 2>&1 &
-
-          timeout 180 adb wait-for-device
-
+          
+          echo "Waiting for emulator..."
+          timeout 180 adb wait-for-device || exit 1
+          
+          echo "Waiting for boot completion..."
           for i in {1..60}; do
-            boot_status=$(adb shell getprop sys.boot_completed | tr -d '\r')
-            if [ "$boot_status" = "1" ]; then
-              echo "Emulator booted in ${i} attempts"
+            STATUS=$(adb shell getprop sys.boot_completed 2>/dev/null)
+            CLEAN=$(echo "$STATUS" | tr -d '[:space:]')
+            if [ "$CLEAN" = "1" ]; then
+              echo "Emulator booted successfully"
               break
             fi
             sleep 2
           done
-
+          
           adb shell settings put global window_animation_scale 0
           adb shell settings put global transition_animation_scale 0
           adb shell settings put global animator_duration_scale 0
-
-          adb tcpip 5555
-          sleep 2
+          
           adb devices
 
-      - name: Setup WebRTC Bridge
+      - name: Setup WebRTC Client
         run: |
-          mkdir -p ~/webrtc-stack/signaling
-          cd ~/webrtc-stack/signaling
-
-          npm init -y
           npm install socket.io-client
-
-          cat > emulator-client.js << 'EOJS'
+          
+          cat > webrtc-client.js << 'ENDJS'
           const io = require('socket.io-client');
-
           const socket = io('http://159.195.6.61:3000');
           const ROOM_ID = 'emulator-room-1';
-
+          
           socket.on('connect', () => {
-            console.log('[OK] Connected to signaling server');
+            console.log('[OK] Connected to signaling server at 159.195.6.61');
             socket.emit('join-room', ROOM_ID);
             socket.emit('emulator-ready', ROOM_ID);
+            console.log('[OK] Emulator ready signal sent');
           });
-
+          
           socket.on('disconnect', () => {
-            console.log('[X] Disconnected');
+            console.log('[X] Disconnected from signaling server');
           });
-
+          
+          socket.on('error', (err) => {
+            console.error('[ERROR]', err);
+          });
+          
           setInterval(() => {
-            console.log('[HEARTBEAT] Active');
+            console.log('[HEARTBEAT] Emulator active');
           }, 30000);
-          EOJS
+          
+          console.log('[STARTING] WebRTC client for emulator');
+          ENDJS
+          
+          nohup node webrtc-client.js > webrtc-client.log 2>&1 &
+          sleep 3
+          
+          if pgrep -f "webrtc-client.js" > /dev/null; then
+            echo "WebRTC client started successfully"
+          else
+            echo "Failed to start WebRTC client"
+            cat webrtc-client.log
+            exit 1
+          fi
 
-          nohup node emulator-client.js > ~/emulator-client.log 2>&1 &
-
-      - name: Display Access Info
+      - name: Display Access Information
         run: |
           echo ""
           echo "========================================"
-          echo "   EMULATOR IS READY!"
+          echo "   ANDROID EMULATOR IS READY"
           echo "========================================"
           echo ""
-          echo "WebRTC Access:"
+          echo "Access the emulator in your browser:"
           echo "   http://159.195.6.61/"
           echo ""
-          echo "ADB Access:"
-          echo "   adb connect 159.195.6.61:5555"
+          echo "Click 'Connect to Emulator' button"
           echo ""
-          echo "Duration: ${{ github.event.inputs.duration }} minutes"
+          echo "Session will run for: ${{ github.event.inputs.duration }} minutes"
           echo ""
           echo "========================================"
 
       - name: Keep Session Alive
         run: |
           DURATION=${{ github.event.inputs.duration }}
-          DURATION=${DURATION:-30}
-
-          for ((i=1; i<=DURATION; i++)); do
+          echo "Session will run for ${DURATION} minutes"
+          
+          for ((i=1; i<=${DURATION}; i++)); do
             echo "[${i}/${DURATION} min] Session active"
-            adb shell dumpsys battery | head -3 || echo "Checking..."
+            
+            if adb shell dumpsys battery | head -3; then
+              echo "Emulator is responsive"
+            else
+              echo "Warning: Emulator might be unresponsive"
+            fi
+            
+            if pgrep -f "webrtc-client.js" > /dev/null; then
+              echo "WebRTC client is running"
+            else
+              echo "Warning: WebRTC client stopped"
+            fi
+            
             sleep 60
           done
+          
+          echo "Session duration completed"
 
       - name: Cleanup
         if: always()
         run: |
+          echo "Cleaning up..."
           pkill -9 emulator || true
           pkill -9 qemu-system || true
           pkill -9 node || true
+          echo "Cleanup complete"
 
       - name: Upload Logs
         if: always()
@@ -163,5 +192,5 @@ jobs:
           name: logs-${{ github.run_number }}
           path: |
             emulator.log
-            ~/emulator-client.log
+            webrtc-client.log
           retention-days: 2
