@@ -1,0 +1,167 @@
+name: Android 11 AVD - Level 2 WebRTC
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Session duration in minutes (5-360)'
+        required: false
+        default: '30'
+
+jobs:
+  run-emulator:
+    runs-on: self-hosted
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: System Info
+        run: |
+          echo "=========================================="
+          echo "Runner: $(hostname)"
+          echo "IP: $(curl -s ifconfig.me)"
+          echo "CPU: $(nproc) cores"
+          echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
+          echo "=========================================="
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Licenses & Install System Image
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager --install "system-images;android-30;google_apis;x86_64"
+          sdkmanager --install "platform-tools" "emulator"
+
+      - name: Create Optimized AVD
+        run: |
+          echo "no" | avdmanager create avd -n test \
+            -k "system-images;android-30;google_apis;x86_64" \
+            -d pixel_xl --force
+
+          cat <<EOF >> ~/.android/avd/test.avd/config.ini
+          hw.ramSize=4096
+          hw.heapSize=512
+          disk.dataPartition.size=8192M
+          hw.gpu.enabled=yes
+          hw.gpu.mode=host
+          hw.lcd.density=240
+          hw.lcd.width=720
+          hw.lcd.height=1280
+          EOF
+
+      - name: Start Emulator
+        run: |
+          nohup xvfb-run --auto-servernum --server-args='-screen 0 720x1280x24' \
+            emulator -avd test \
+            -gpu host \
+            -no-audio \
+            -no-boot-anim \
+            -no-snapshot \
+            -netdelay none \
+            -netspeed full \
+            -grpc 8554 \
+            -verbose > emulator.log 2>&1 &
+
+          timeout 180 adb wait-for-device
+
+          for i in {1..60}; do
+            boot_status=$(adb shell getprop sys.boot_completed | tr -d '\r')
+            if [ "$boot_status" = "1" ]; then
+              echo "Emulator booted in ${i} attempts"
+              break
+            fi
+            sleep 2
+          done
+
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+
+          adb tcpip 5555
+          sleep 2
+          adb devices
+
+      - name: Setup WebRTC Bridge
+        run: |
+          mkdir -p ~/webrtc-stack/signaling
+          cd ~/webrtc-stack/signaling
+
+          npm init -y
+          npm install socket.io-client
+
+          cat > emulator-client.js << 'EOJS'
+          const io = require('socket.io-client');
+
+          const socket = io('http://159.195.6.61:3000');
+          const ROOM_ID = 'emulator-room-1';
+
+          socket.on('connect', () => {
+            console.log('[OK] Connected to signaling server');
+            socket.emit('join-room', ROOM_ID);
+            socket.emit('emulator-ready', ROOM_ID);
+          });
+
+          socket.on('disconnect', () => {
+            console.log('[X] Disconnected');
+          });
+
+          setInterval(() => {
+            console.log('[HEARTBEAT] Active');
+          }, 30000);
+          EOJS
+
+          nohup node emulator-client.js > ~/emulator-client.log 2>&1 &
+
+      - name: Display Access Info
+        run: |
+          echo ""
+          echo "========================================"
+          echo "   EMULATOR IS READY!"
+          echo "========================================"
+          echo ""
+          echo "WebRTC Access:"
+          echo "   http://159.195.6.61/"
+          echo ""
+          echo "ADB Access:"
+          echo "   adb connect 159.195.6.61:5555"
+          echo ""
+          echo "Duration: ${{ github.event.inputs.duration }} minutes"
+          echo ""
+          echo "========================================"
+
+      - name: Keep Session Alive
+        run: |
+          DURATION=${{ github.event.inputs.duration }}
+          DURATION=${DURATION:-30}
+
+          for ((i=1; i<=DURATION; i++)); do
+            echo "[${i}/${DURATION} min] Session active"
+            adb shell dumpsys battery | head -3 || echo "Checking..."
+            sleep 60
+          done
+
+      - name: Cleanup
+        if: always()
+        run: |
+          pkill -9 emulator || true
+          pkill -9 qemu-system || true
+          pkill -9 node || true
+
+      - name: Upload Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ github.run_number }}
+          path: |
+            emulator.log
+            ~/emulator-client.log
+          retention-days: 2
