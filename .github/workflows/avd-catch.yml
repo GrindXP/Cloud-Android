@@ -1,4 +1,4 @@
-name: avd-andr11
+name: avd-catch
 
 on:
   workflow_dispatch:
