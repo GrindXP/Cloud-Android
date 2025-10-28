@@ -167,7 +167,7 @@ jobs:
           force-avd-creation: false
           emulator-boot-timeout: 600
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
+          emulator-options: -gpu host -camera-back emulated -camera-front emulated -noaudio -no-boot-anim
           script: ./session.sh "${{ inputs.duration }}"
 
       - name: Save persistent AVD cache (primary)
