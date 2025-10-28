@@ -32,6 +32,14 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Install Android 30 system image and device profile
+        run: |
+          sdkmanager --install "system-images;android-30;google_apis;x86_64"
+          sdkmanager --install "device-definitions"
+
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
@@ -84,9 +92,9 @@ jobs:
           done
 
           if pgrep -x frpc >/dev/null; then
-            echo "frpc running"
+            echo "✓ frpc running"
           else
-            echo "frpc failed"
+            echo "✗ frpc failed"
             exit 1
           fi
 
@@ -102,13 +110,27 @@ jobs:
           restore-keys: |
             avd-30-persistent-v1-
 
-      - name: Create and launch emulator with GUI
+      - name: Create AVD if not cached
+        if: steps.avd-cache.outputs.cache-hit != 'true'
         run: |
-          echo "no" | avdmanager create avd -n test -k "system-images;android-30;google_apis;x86_64" -d pixel_xl || true
+          echo "Creating new AVD..."
+          echo "no" | avdmanager create avd -n test -k "system-images;android-30;google_apis;x86_64" -d pixel_xl --force || {
+            echo "Fallback: using 'pixel'"
+            echo "no" | avdmanager create avd -n test -k "system-images;android-30;google_apis;x86_64" -d pixel --force
+          }
+
+          echo "Configuring AVD..."
           echo "hw.ramSize=6144" >> ~/.android/avd/test.avd/config.ini
           echo "hw.heapSize=1024" >> ~/.android/avd/test.avd/config.ini
           echo "disk.dataPartition.size=12288M" >> ~/.android/avd/test.avd/config.ini
 
+      - name: Configure existing AVD from cache
+        if: steps.avd-cache.outputs.cache-hit == 'true'
+        run: avdmanager list avd
+
+      - name: Launch emulator with GUI
+        run: |
+          echo "Starting emulator..."
           nohup xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' \
           emulator -avd test -gpu host -camera-back emulated -camera-front emulated \
           -noaudio -no-boot-anim -verbose > emulator.log 2>&1 &
@@ -117,16 +139,43 @@ jobs:
           for i in {1..60}; do
             boot_status=$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
             if [[ "$boot_status" == "1" ]]; then
-              echo "Emulator booted successfully"
+              echo "✓ Emulator booted successfully (attempt $i)"
               break
             fi
+            echo "Waiting... ($i/60)"
             sleep 5
           done
 
+          if [[ "$boot_status" != "1" ]]; then
+            echo "✗ Emulator failed to boot"
+            exit 1
+          fi
+
+          echo "Enabling TCP/IP mode..."
           adb tcpip 5555
           sleep 2
           adb connect 127.0.0.1:5555 || true
           adb devices
+
+      - name: Keep session alive
+        run: |
+          DURATION=${{ github.event.inputs.duration }}
+          echo "Session will run for ${DURATION} minutes"
+          for ((i=1; i<=${DURATION}; i++)); do
+            echo "⏱ Session active: ${i}/${DURATION} min"
+            adb shell dumpsys battery | grep level || echo "Checking emulator..."
+            sleep 60
+          done
+          echo "Session completed"
+
+      - name: Save AVD state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.android/avd
+            ~/.android/adb*
+          key: avd-30-persistent-v1-${{ github.run_id }}
 
       - name: Upload emulator logs
         if: always()
