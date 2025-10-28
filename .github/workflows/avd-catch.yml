@@ -90,9 +90,9 @@ jobs:
           path: |
             ~/.android/avd
             ~/.android/adb*
-          key: avd-30-persistent-v1
+          key: avd-30-persistent-v1-${{ github.run_id }}
           restore-keys: |
-            avd-30-persistent-v1
+            avd-30-persistent-v1-
 
       - name: Create timer.sh
         shell: bash
@@ -170,14 +170,23 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none -writable-system
           script: ./session.sh "${{ inputs.duration }}"
 
-      - name: Save persistent AVD cache (always)
+      - name: Save persistent AVD cache (primary)
         if: always()
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.android/avd
             ~/.android/adb*
-          key: avd-30-persistent-v1
+          key: avd-30-persistent-v1-${{ github.run_id }}
+
+      - name: Save persistent AVD cache (fallback)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.android/avd
+            ~/.android/adb*
+          key: avd-30-persistent-v1-fallback-${{ github.run_id }}
 
       - name: Upload FRP logs
         if: always()
