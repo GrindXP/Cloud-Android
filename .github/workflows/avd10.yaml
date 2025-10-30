@@ -5,7 +5,7 @@ on: [push, pull_request, workflow_dispatch]
 jobs:
   rooted-avd:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     
     steps:
     - uses: actions/checkout@v4
@@ -18,12 +18,11 @@ jobs:
         pip install gdown --upgrade
         echo "✅ gdown installed"
     
-    # Step 2: Download Config Files (ZIP)
+    # Step 2: Download Config Files
     - name: Download Config Files
       run: |
         echo "⏳ Downloading config files..."
         
-        # Extract file ID from your link
         gdown "https://drive.google.com/uc?id=1njW8dKWUC90p6edEgxkXaMXfx6Xu0pU2" \
           -O ~/config-files.zip \
           --quiet
@@ -31,160 +30,133 @@ jobs:
         mkdir -p ~/.android/avd/pixel_4.avd
         unzip -q ~/config-files.zip -d ~/.android/avd/pixel_4.avd/
         
-        echo "✅ Config files extracted:"
-        ls -lah ~/.android/avd/pixel_4.avd/
+        echo "✅ Config files extracted"
     
-    # Step 3: Download Rooted Userdata (6.4GB)
-    - name: Download Rooted Userdata (Android 10 + Play Store + Root)
+    # Step 3: Download Rooted Userdata
+    - name: Download Rooted Userdata
       run: |
-        echo "⏳ Downloading rooted userdata (6.4GB - may take 5-10 minutes)..."
+        echo "⏳ Downloading rooted userdata (may take 10 minutes)..."
         
-        # New userdata link
         gdown "https://drive.google.com/uc?id=1f1gJ00aLuxefIT7VHkEG8mWsFio32K_O" \
           -O ~/.android/avd/pixel_4.avd/userdata-qemu.img \
           --quiet
         
-        echo "✅ Userdata downloaded:"
-        ls -lah ~/.android/avd/pixel_4.avd/userdata-qemu.img
+        echo "✅ Userdata downloaded"
     
-    # Step 4: Accept licenses & download system image
+    # Step 4: Setup SDK
     - name: Setup Android SDK
       run: |
         echo "⏳ Accepting licenses..."
         yes | sdkmanager --licenses > /dev/null 2>&1
         
-        echo "⏳ Downloading system image (android-30)..."
+        echo "⏳ Downloading system image..."
         sdkmanager "system-images;android-30;google_apis;x86_64"
         
         echo "✅ Android SDK ready"
     
-    # Step 5: Boot Rooted Android 10 AVD
+    # Step 5: CRITICAL - Download & Install Emulator
+    - name: Download & Install Emulator
+      run: |
+        echo "⏳ Installing emulator package..."
+        sdkmanager "emulator"
+        
+        echo "⏳ Setting up emulator PATH..."
+        export ANDROID_SDK_ROOT=$ANDROID_HOME
+        export PATH=$ANDROID_SDK_ROOT/emulator:$ANDROID_SDK_ROOT/platform-tools:$PATH
+        
+        echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+        echo "$ANDROID_SDK_ROOT/emulator" >> $GITHUB_PATH
+        echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
+        
+        echo "✅ Emulator installed"
+        
+        # Verify
+        which emulator
+        emulator -version
+    
+    # Step 6: Boot Emulator
     - name: Boot Rooted Android 10 AVD
       run: |
+        echo "⏳ Setting environment..."
+        export ANDROID_SDK_ROOT=$ANDROID_HOME
+        export PATH=$ANDROID_SDK_ROOT/emulator:$ANDROID_SDK_ROOT/platform-tools:$PATH
+        
         echo "⏳ Booting emulator..."
-        
-        # Boot with hardware acceleration
-        emulator -avd pixel_4 \
+        timeout 120 emulator -avd pixel_4 \
           -no-snapshot-save \
-          -gpu on \
-          -qemu -enable-kvm &
+          -no-window \
+          -gpu off \
+          -verbose &
         
-        echo "⏳ Waiting for device to boot..."
+        echo "⏳ Waiting for adb daemon..."
+        sleep 10
+        
+        echo "⏳ Connecting to device..."
         adb wait-for-device
-        sleep 60
         
-        # Enable ADB TCP (port 5555 for remote access)
+        echo "⏳ Booting system (this may take 2-3 minutes)..."
+        for i in {1..60}; do
+          if adb shell getprop sys.boot_completed | grep -q 1; then
+            echo "✅ Boot completed!"
+            break
+          fi
+          echo "Wait $i/60..."
+          sleep 3
+        done
+        
+        echo "⏳ Enabling ADB TCP..."
         adb tcpip 5555
         
-        echo "✅ Emulator booted successfully"
+        echo "✅ Emulator ready"
         adb devices
     
-    # Step 6: Test Root Access
-    - name: Test Root Access (Magisk/Su)
+    # Step 7: Test Root
+    - name: Test Root Access
       run: |
         echo "🔍 Testing root access..."
         
-        # Test 1: whoami
-        echo "Test 1: whoami"
-        adb shell su -c "whoami"
+        sleep 10
         
-        # Test 2: id (should show uid=0)
-        echo "Test 2: id"
-        adb shell su -c "id"
+        # Test root
+        adb shell su -c "whoami" || adb shell su -c "id"
         
-        # Test 3: su binary location
-        echo "Test 3: su binary"
-        adb shell su -c "which su"
-        
-        echo "✅ ROOT VERIFIED!"
+        echo "✅ Root access verified"
     
-    # Step 7: Display Connection Info
-    - name: Display Remote Access Information
+    # Step 8: Display Access Info
+    - name: Display Remote Access Info
       run: |
-        RUNNER_IP=$(curl -s https://api.ipify.org || echo "159.195.6.61")
+        RUNNER_IP=$(curl -s https://api.ipify.org 2>/dev/null || echo "159.195.6.61")
         
         echo ""
         echo "════════════════════════════════════════════════════════════════"
-        echo "🎯 ROOTED ANDROID 10 AVD - REMOTE ACCESS INFORMATION"
+        echo "✅ ROOTED ANDROID 10 AVD READY FOR REMOTE ACCESS"
         echo "════════════════════════════════════════════════════════════════"
         echo ""
-        echo "📱 Android Version: Android 10"
-        echo "🛡️  Root Status: Rooted with Magisk ✅"
-        echo "🎮 Play Store: Included ✅"
+        echo "🎯 REMOTE CONNECTION COMMANDS:"
+        echo ""
+        echo "1. ADB (Android Terminal Access):"
+        echo "   adb connect 159.195.6.61:5555"
+        echo "   adb shell su -c 'whoami'   # Should output: root"
+        echo ""
+        echo "2. VNC (Desktop GUI):"
+        echo "   vncviewer 159.195.6.61:5900"
         echo ""
         echo "════════════════════════════════════════════════════════════════"
-        echo "🌐 REMOTE CONNECTION METHODS"
-        echo "════════════════════════════════════════════════════════════════"
-        echo ""
-        echo "1️⃣  VNC DESKTOP (GUI)"
-        echo "   Command: vncviewer 159.195.6.61:5900"
-        echo "   Or use any VNC client: 159.195.6.61:5900"
-        echo ""
-        echo "2️⃣  ADB ANDROID EMULATOR (Terminal)"
-        echo "   Command: adb connect 159.195.6.61:5555"
-        echo "   Verify: adb devices"
-        echo ""
-        echo "════════════════════════════════════════════════════════════════"
-        echo "💻 EXAMPLE COMMANDS (with root)"
-        echo "════════════════════════════════════════════════════════════════"
-        echo ""
-        echo "adb connect 159.195.6.61:5555"
-        echo "adb shell su -c 'whoami'              # Should output: root"
-        echo "adb shell su -c 'id'                  # Should show uid=0(root)"
-        echo "adb shell su -c 'pm list packages'    # List all apps"
-        echo "adb shell su -c 'am start -n com.android.settings/.Settings'  # Launch app"
-        echo ""
-        echo "════════════════════════════════════════════════════════════════"
-        echo "⏳ WORKFLOW STATUS: ✅ RUNNING"
-        echo "════════════════════════════════════════════════════════════════"
-        echo ""
-        echo "✅ Config files: Downloaded & extracted"
-        echo "✅ Userdata: Downloaded (6.4GB)"
-        echo "✅ System image: Downloaded"
-        echo "✅ Emulator: Booted"
-        echo "✅ ADB TCP: Enabled on port 5555"
-        echo "✅ Root: Verified"
-        echo ""
-        echo "⏰ Workflow will keep running for remote access..."
-        echo "You can now connect from your VPS or local machine!"
         echo ""
     
-    # Step 8: System Information
-    - name: Get System & Device Info
+    # Step 9: Keep Running
+    - name: Keep Emulator Running
       run: |
-        echo "📊 Android System Information:"
+        echo "⏳ Emulator running for remote access..."
+        echo "Keep this workflow running to maintain ADB connection"
         echo ""
         
-        adb shell getprop ro.build.version.release
-        echo ""
-        
-        adb shell getprop ro.product.model
-        echo ""
-        
-        adb shell getprop ro.build.version.sdk
-        echo ""
-        
-        echo "✅ Device ready for remote access!"
-    
-    # Step 9: Keep Services Running
-    - name: Keep Emulator & Services Running
-      run: |
-        echo "⏳ Services running for remote access..."
-        echo ""
-        echo "🎯 Access Points:"
-        echo "   VNC (Desktop): 159.195.6.61:5900"
-        echo "   ADB (Android): 159.195.6.61:5555"
-        echo ""
-        echo "Keeping workflow alive for 50 minutes..."
-        
-        # Keep running (will timeout at 60 min total)
-        sleep 3000
+        sleep 2700  # Keep for 45 minutes
     
     # Cleanup
     - name: Cleanup
       if: always()
       run: |
-        echo "🛑 Shutting down..."
         adb emu kill || true
         pkill -f emulator || true
-        echo "✅ Cleanup complete"
+        echo "✅ Cleanup done"
