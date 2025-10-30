@@ -1,0 +1,157 @@
+name: Boot Rooted Android 10 AVD + Remote ADB Access
+
+on: [push, pull_request]
+
+jobs:
+  rooted-avd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - uses: android-actions/setup-android@v3
+    
+    # Step 1: Install gdown
+    - name: Install gdown
+      run: |
+        pip install gdown --upgrade
+    
+    # Step 2: Download config files
+    - name: Download Config Files (config.ini + hardware-qemu.ini)
+      run: |
+        echo "⏳ Downloading config files..."
+        
+        gdown "https://drive.google.com/uc?id=1njW8dKWUC90p6edEgxkXaMXfx6Xu0pU2" \
+          -O ~/config-files.zip \
+          --quiet
+        
+        mkdir -p ~/.android/avd/pixel_4.avd
+        unzip -q ~/config-files.zip -d ~/.android/avd/pixel_4.avd/
+        
+        echo "✅ Config files extracted"
+        ls -la ~/.android/avd/pixel_4.avd/
+    
+    # Step 3: Download rooted userdata
+    - name: Download Rooted Userdata (Android 10 + Play Store + Root)
+      run: |
+        echo "⏳ Downloading rooted userdata (this may take 5-10 minutes)..."
+        
+        gdown "https://drive.google.com/uc?id=1W_RxC6eMJwk8mASpo_LIFeVDgNIqfstT" \
+          -O ~/.android/avd/pixel_4.avd/userdata-qemu.img \
+          --quiet
+        
+        echo "✅ Userdata downloaded"
+        ls -lah ~/.android/avd/pixel_4.avd/
+    
+    # Step 4: Accept licenses & download system image
+    - name: Setup Android SDK
+      run: |
+        echo "⏳ Accepting licenses..."
+        yes | sdkmanager --licenses > /dev/null 2>&1
+        
+        echo "⏳ Downloading system image..."
+        sdkmanager "system-images;android-30;google_apis;x86_64"
+        
+        echo "✅ SDK ready"
+    
+    # Step 5: Boot emulator
+    - name: Boot Rooted Android 10 AVD
+      run: |
+        echo "⏳ Booting emulator..."
+        
+        # Enable ADB over TCP (port 5555 for remote access)
+        emulator -avd pixel_4 \
+          -no-window \
+          -gpu off \
+          -no-snapshot-save \
+          -qemu -enable-kvm &
+        
+        echo "⏳ Waiting for device..."
+        adb wait-for-device
+        sleep 60
+        
+        # Enable ADB TCP (so you can connect remotely)
+        adb tcpip 5555
+        
+        echo "✅ AVD booted and ADB TCP enabled"
+        adb devices
+    
+    # Step 6: Test root access
+    - name: Test Root Access (Magisk/Su)
+      run: |
+        echo "🔍 Testing root access..."
+        
+        adb shell su -c "whoami"      # Should output: root
+        adb shell su -c "id"          # Should show uid=0(root)
+        adb shell su -c "which su"    # Should show su binary path
+        
+        echo "✅ ROOT VERIFIED!"
+    
+    # Step 7: Display ADB connect command for remote access
+    - name: Display Remote ADB Connection Info
+      run: |
+        echo "════════════════════════════════════════════════"
+        echo "🎯 REMOTE ADB ACCESS INSTRUCTIONS"
+        echo "════════════════════════════════════════════════"
+        echo ""
+        echo "To access this AVD remotely from your VPS:"
+        echo ""
+        echo "adb connect 159.195.6.61:5555"
+        echo ""
+        echo "Or if GitHub runner has a different public IP:"
+        
+        # Get the runner's public IP (if available)
+        RUNNER_IP=$(curl -s https://api.ipify.org || echo "YOUR_RUNNER_IP")
+        echo "adb connect $RUNNER_IP:5555"
+        
+        echo ""
+        echo "Then use root:"
+        echo "adb shell su -c 'your-command-here'"
+        echo ""
+        echo "════════════════════════════════════════════════"
+    
+    # Step 8: Keep AVD running (optional, for manual testing)
+    - name: AVD Status
+      run: |
+        echo "📱 AVD Status:"
+        adb devices -l
+        
+        echo ""
+        echo "📊 System Info:"
+        adb shell getprop ro.build.version.release  # Android version
+        adb shell getprop ro.product.model          # Device model
+    
+    # Step 9: Run your tests here
+    - name: Run Your Tests / Commands
+      run: |
+        echo "🧪 Running tests with root access..."
+        
+        # Example: Install app
+        # adb install path/to/app.apk
+        
+        # Example: Run with root
+        # adb shell su -c "pm install -r /path/to/app.apk"
+        
+        # Example: Check Play Store
+        adb shell pm list packages | grep play
+        
+        echo "✅ Tests completed!"
+    
+    # Step 10: Keep emulator alive for remote access (optional)
+    - name: Keep Emulator Running (For Remote Testing)
+      if: always()
+      run: |
+        echo "⏳ AVD still running. Connect remotely or press Ctrl+C"
+        echo "Remote ADB: adb connect 159.195.6.61:5555"
+        
+        # Keep running for up to 50 minutes (total timeout is 60)
+        sleep 3000
+    
+    # Cleanup
+    - name: Shutdown Emulator
+      if: always()
+      run: |
+        adb emu kill || true
+        pkill -f emulator || true
+        echo "✅ Emulator shut down"
