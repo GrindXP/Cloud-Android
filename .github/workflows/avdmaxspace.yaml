@@ -1,4 +1,4 @@
-name: avd-rooted-maxperf
+name: avd-rooted-maxperf-FIXED
 
 on:
   workflow_dispatch:
@@ -39,7 +39,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK on /mnt (NO cleanup - use big disk!)
+      - name: Setup Android SDK on /mnt (FIXED - Better error handling)
         run: |
           # Create Android home on /mnt (70GB+ available)
           sudo mkdir -p /mnt/android
@@ -48,27 +48,54 @@ jobs:
           export ANDROID_HOME=/mnt/android
           export ANDROID_USER_HOME=/mnt/android
           
-          # Use official setup (will use /mnt via env vars)
-          mkdir -p $ANDROID_HOME/cmdline-tools
-          cd $ANDROID_HOME
+          cd /mnt/android
           
-          # Download SDK
+          echo "📥 Downloading SDK..."
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          
+          echo "📦 Extracting SDK..."
           unzip -q commandlinetools-linux-*
           rm commandlinetools-linux-*.zip
           
-          # Accept licenses
-          echo "" | ./cmdline-tools/bin/sdkmanager --sdk_root=/mnt/android --licenses > /dev/null 2>&1 || true
+          # Verify extraction
+          if [ ! -f "./cmdline-tools/bin/sdkmanager" ]; then
+            echo "❌ SDK extraction failed!"
+            ls -la ./
+            exit 1
+          fi
           
-          # Install tools
+          echo "✅ SDK extracted successfully"
+          
+          echo "📝 Accepting licenses..."
+          yes | ./cmdline-tools/bin/sdkmanager --sdk_root=/mnt/android --licenses 2>&1 | tail -5
+          
+          echo ""
+          echo "📥 Installing platform-tools..."
+          ./cmdline-tools/bin/sdkmanager --sdk_root=/mnt/android "platform-tools" 2>&1 | tail -5
+          
+          # Verify platform-tools downloaded
+          if [ ! -f "/mnt/android/platform-tools/adb" ]; then
+            echo "❌ platform-tools installation FAILED!"
+            echo "Available tools:"
+            ls -la /mnt/android/ || echo "No directories"
+            exit 1
+          fi
+          
+          echo "✅ platform-tools installed"
+          
+          echo ""
+          echo "📥 Installing build-tools & system-images..."
           ./cmdline-tools/bin/sdkmanager --sdk_root=/mnt/android \
-            "platform-tools" \
             "build-tools;34.0.0" \
             "platforms;android-34" \
             "system-images;android-30;google_apis;x86_64" \
-            > /dev/null 2>&1
+            2>&1 | tail -10
           
-          echo "✅ Android SDK installed on /mnt (70GB+ available)"
+          echo ""
+          echo "✅ Android SDK fully installed on /mnt"
+          echo ""
+          echo "📊 Installed components:"
+          ls -lh /mnt/android/
           df -h /mnt | tail -1
 
       - name: Create Rooted AVD on /mnt
@@ -79,14 +106,15 @@ jobs:
           
           mkdir -p $ANDROID_AVD_HOME
           
-          # Create AVD with MAX disk
+          echo "Creating AVD..."
           echo "no" | /mnt/android/cmdline-tools/bin/avdmanager create avd \
             -n "rooted_avd" \
             -k "system-images;android-30;google_apis;x86_64" \
             -d "pixel_6_pro" \
             -c 60G \
-            2>&1 | tail -5 || true
+            2>&1 | tail -10 || true
           
+          echo ""
           echo "✅ Rooted AVD created on /mnt with 60GB storage"
 
       - name: Install FRP Client v0.58.1
@@ -138,6 +166,8 @@ jobs:
           DURATION_SECONDS=$((3600 * DURATION_HOURS))
           START_TIME=$(date +%s)
           
+          export PATH=/mnt/android/platform-tools:$PATH
+          
           echo "⏱️  Session: ${DURATION_HOURS} hours"
           echo "🕐 Started: $(date)"
           echo "🔥 Protocol: KCP (30-40% lower latency)"
@@ -163,7 +193,7 @@ jobs:
             
             ITERATION=$((ITERATION + 1))
             if [ $((ITERATION % 60)) -eq 0 ]; then
-              DEVICES=$(adb devices | grep -c "5555.*device" || echo "0")
+              DEVICES=$(adb devices 2>/dev/null | grep -c "5555.*device" || echo "0")
               FRP_STATUS="✅"
               pgrep -x "frpc" > /dev/null || FRP_STATUS="❌"
               echo "[$(date '+%H:%M:%S')] ⏳ ${HOURS}h ${MINUTES}m | 📱 ADB: ${DEVICES} | 🔗 KCP: ${FRP_STATUS}"
@@ -186,6 +216,16 @@ jobs:
           echo "   💪 MAXIMUM PERFORMANCE"
           echo "========================================="
           echo ""
+          
+          # Verify adb exists BEFORE running
+          if [ ! -f "/mnt/android/platform-tools/adb" ]; then
+            echo "❌ ADB NOT FOUND at /mnt/android/platform-tools/adb"
+            echo "Available files:"
+            find /mnt/android -name "adb" 2>/dev/null || echo "No adb found"
+            exit 1
+          fi
+          
+          echo "✅ ADB found, starting emulator..."
           
           # Start emulator
           /mnt/android/emulator/emulator -avd rooted_avd \
@@ -228,11 +268,11 @@ jobs:
           
           echo ""
           echo "💾 Storage Available:"
-          /mnt/android/platform-tools/adb -s 127.0.0.1:5555 shell df -h /data | grep -v Filesystem
+          /mnt/android/platform-tools/adb -s 127.0.0.1:5555 shell df -h /data | grep -v Filesystem || echo "Storage check pending..."
           
           echo ""
           echo "🧠 Memory:"
-          /mnt/android/platform-tools/adb -s 127.0.0.1:5555 shell cat /proc/meminfo | grep MemTotal
+          /mnt/android/platform-tools/adb -s 127.0.0.1:5555 shell cat /proc/meminfo | grep MemTotal || echo "Memory check pending..."
           
           echo ""
           echo "========================================="
