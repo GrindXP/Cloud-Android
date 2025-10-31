@@ -1,4 +1,4 @@
-name: avd-maxspace
+name: avd-rooted-maxperf
 
 on:
   workflow_dispatch:
