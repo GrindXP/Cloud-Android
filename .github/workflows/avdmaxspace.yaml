@@ -1,4 +1,4 @@
-name: avd-rooted-maxperf-FIXED
+name: avd-rooted-working
 
 on:
   workflow_dispatch:
@@ -17,13 +17,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Check Available Space
-        run: |
-          echo "📊 Disk Space Available:"
-          df -h / | tail -1
-          df -h /mnt | tail -1
-          echo ""
-
       - name: Enable KVM Hardware Acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules > /dev/null
@@ -39,85 +32,48 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK on /mnt (FIXED - Better error handling)
+      - name: Setup Android SDK (Official Action)
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: 30
+
+      - name: Move SDK to /mnt for 60GB+ storage
         run: |
-          # Create Android home on /mnt (70GB+ available)
+          echo "Moving Android SDK to /mnt for maximum space..."
+          
+          # The official setup puts SDK in ~/Android/Sdk
+          # We'll move it to /mnt for 70GB+ space
+          
           sudo mkdir -p /mnt/android
           sudo chown $(whoami):$(whoami) /mnt/android
           
-          export ANDROID_HOME=/mnt/android
-          export ANDROID_USER_HOME=/mnt/android
+          # Copy SDK to /mnt
+          cp -r ~/Android/Sdk /mnt/android/sdk
           
-          cd /mnt/android
+          # Set environment for use
+          export ANDROID_HOME=/mnt/android/sdk
+          echo "export ANDROID_HOME=/mnt/android/sdk" >> $GITHUB_ENV
           
-          echo "📥 Downloading SDK..."
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-          
-          echo "📦 Extracting SDK..."
-          unzip -q commandlinetools-linux-*
-          rm commandlinetools-linux-*.zip
-          
-          # Verify extraction
-          if [ ! -f "./cmdline-tools/bin/sdkmanager" ]; then
-            echo "❌ SDK extraction failed!"
-            ls -la ./
-            exit 1
-          fi
-          
-          echo "✅ SDK extracted successfully"
-          
-          echo "📝 Accepting licenses..."
-          yes | ./cmdline-tools/bin/sdkmanager --sdk_root=/mnt/android --licenses 2>&1 | tail -5
-          
-          echo ""
-          echo "📥 Installing platform-tools..."
-          ./cmdline-tools/bin/sdkmanager --sdk_root=/mnt/android "platform-tools" 2>&1 | tail -5
-          
-          # Verify platform-tools downloaded
-          if [ ! -f "/mnt/android/platform-tools/adb" ]; then
-            echo "❌ platform-tools installation FAILED!"
-            echo "Available tools:"
-            ls -la /mnt/android/ || echo "No directories"
-            exit 1
-          fi
-          
-          echo "✅ platform-tools installed"
-          
-          echo ""
-          echo "📥 Installing build-tools & system-images..."
-          ./cmdline-tools/bin/sdkmanager --sdk_root=/mnt/android \
-            "build-tools;34.0.0" \
-            "platforms;android-34" \
-            "system-images;android-30;google_apis;x86_64" \
-            2>&1 | tail -10
-          
-          echo ""
-          echo "✅ Android SDK fully installed on /mnt"
-          echo ""
-          echo "📊 Installed components:"
-          ls -lh /mnt/android/
+          echo "✅ SDK moved to /mnt"
           df -h /mnt | tail -1
 
-      - name: Create Rooted AVD on /mnt
+      - name: Create Rooted AVD
         run: |
-          export ANDROID_HOME=/mnt/android
-          export ANDROID_USER_HOME=/mnt/android
-          export ANDROID_AVD_HOME=/mnt/android/avd
+          export ANDROID_HOME=/mnt/android/sdk
           
-          mkdir -p $ANDROID_AVD_HOME
+          mkdir -p ~/.android/avd
           
-          echo "Creating AVD..."
-          echo "no" | /mnt/android/cmdline-tools/bin/avdmanager create avd \
+          echo "Creating rooted AVD..."
+          echo "no" | $ANDROID_HOME/cmdline-tools/latest/bin/avdmanager create avd \
             -n "rooted_avd" \
             -k "system-images;android-30;google_apis;x86_64" \
             -d "pixel_6_pro" \
             -c 60G \
-            2>&1 | tail -10 || true
+            2>&1 | tail -5 || true
           
-          echo ""
-          echo "✅ Rooted AVD created on /mnt with 60GB storage"
+          echo "✅ Rooted AVD created"
 
-      - name: Install FRP Client v0.58.1
+      - name: Install FRP Client
         run: |
           wget -q https://github.com/fatedier/frp/releases/download/v0.58.1/frp_0.58.1_linux_amd64.tar.gz
           tar -xzf frp_0.58.1_linux_amd64.tar.gz
@@ -126,7 +82,7 @@ jobs:
           rm -rf frp_0.58.1_linux_amd64*
           echo "✅ FRP installed"
 
-      - name: Create FRP Client Configuration with KCP
+      - name: Create FRP Config
         run: |
           cat > frpc.toml << 'EOF'
           serverAddr = "159.195.6.61"
@@ -139,181 +95,95 @@ jobs:
           localIP = "127.0.0.1"
           localPort = 5555
           remotePort = 5555
-          
-          [[proxies]]
-          name = "github-avd-console"
-          type = "tcp"
-          localIP = "127.0.0.1"
-          localPort = 5554
-          remotePort = 5554
           EOF
-          echo "✅ FRP config created"
+          echo "✅ FRP config ready"
 
-      - name: Start FRP KCP Tunnel
+      - name: Start FRP Tunnel
         run: |
-          echo "🚀 Starting FRP with KCP protocol..."
           nohup frpc -c frpc.toml > frpc.log 2>&1 &
           sleep 5
-          if pgrep -x "frpc" > /dev/null; then
-            echo "✅ FRP KCP tunnel started"
-          fi
+          echo "✅ FRP tunnel started"
 
-      - name: Create Monitoring Script
-        run: |
-          cat > monitor.sh << 'SCRIPT'
-          #!/bin/bash
-          DURATION_HOURS=$1
-          DURATION_SECONDS=$((3600 * DURATION_HOURS))
-          START_TIME=$(date +%s)
-          
-          export PATH=/mnt/android/platform-tools:$PATH
-          
-          echo "⏱️  Session: ${DURATION_HOURS} hours"
-          echo "🕐 Started: $(date)"
-          echo "🔥 Protocol: KCP (30-40% lower latency)"
-          echo "🔓 Root: ✅ Full Access"
-          echo "💾 RAM: 6GB | Storage: 60GB (on /mnt)"
-          echo "🤖 Android 11 (API 30)"
-          echo "🚀 Maximum Performance Mode"
-          echo ""
-          
-          ITERATION=0
-          while true; do
-            CURRENT_TIME=$(date +%s)
-            ELAPSED=$((CURRENT_TIME - START_TIME))
+      - name: Start Emulator & Monitor
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6_pro
+          ram-size: 6144M
+          heap-size: 1024M
+          disk-size: 61440M
+          emulator-options: -no-window -gpu on -memory 6144 -cores 4 -writable-system
+          disable-animations: true
+          script: |
+            echo "========================================="
+            echo "   🚀 Rooted Android 11"
+            echo "   💪 MAXIMUM PERFORMANCE"
+            echo "========================================="
+            echo ""
             
-            if [ $ELAPSED -ge $DURATION_SECONDS ]; then
-              echo "✅ Session completed"
-              break
-            fi
+            # Enable root
+            adb root
+            adb wait-for-device
+            adb remount
             
-            REMAINING=$((DURATION_SECONDS - ELAPSED))
-            HOURS=$((REMAINING / 3600))
-            MINUTES=$(((REMAINING % 3600) / 60))
+            # Enable TCP/IP
+            adb tcpip 5555
+            sleep 5
+            adb connect 127.0.0.1:5555
             
-            ITERATION=$((ITERATION + 1))
-            if [ $((ITERATION % 60)) -eq 0 ]; then
-              DEVICES=$(adb devices 2>/dev/null | grep -c "5555.*device" || echo "0")
-              FRP_STATUS="✅"
-              pgrep -x "frpc" > /dev/null || FRP_STATUS="❌"
-              echo "[$(date '+%H:%M:%S')] ⏳ ${HOURS}h ${MINUTES}m | 📱 ADB: ${DEVICES} | 🔗 KCP: ${FRP_STATUS}"
-            fi
+            echo ""
+            echo "========================================="
+            echo "   📱 Device Info"
+            echo "========================================="
+            echo "Android: 11 (API 30)"
+            echo "RAM: 6GB"
+            echo "Storage: 60GB"
+            echo "Root: ✅"
+            echo ""
             
-            sleep 1
-          done
-          SCRIPT
-          chmod +x monitor.sh
-
-      - name: Start Rooted Emulator - Maximum Performance
-        run: |
-          export ANDROID_HOME=/mnt/android
-          export ANDROID_USER_HOME=/mnt/android
-          export ANDROID_AVD_HOME=/mnt/android/avd
-          export PATH=/mnt/android/emulator:/mnt/android/platform-tools:$PATH
-          
-          echo "========================================="
-          echo "   🚀 Rooted Android 11"
-          echo "   💪 MAXIMUM PERFORMANCE"
-          echo "========================================="
-          echo ""
-          
-          # Verify adb exists BEFORE running
-          if [ ! -f "/mnt/android/platform-tools/adb" ]; then
-            echo "❌ ADB NOT FOUND at /mnt/android/platform-tools/adb"
-            echo "Available files:"
-            find /mnt/android -name "adb" 2>/dev/null || echo "No adb found"
-            exit 1
-          fi
-          
-          echo "✅ ADB found, starting emulator..."
-          
-          # Start emulator
-          /mnt/android/emulator/emulator -avd rooted_avd \
-            -gpu on \
-            -memory 6144 \
-            -cores 4 \
-            -no-window \
-            -no-snapshot \
-            > /tmp/emulator.log 2>&1 &
-          
-          sleep 20
-          
-          # Enable root
-          /mnt/android/platform-tools/adb root
-          /mnt/android/platform-tools/adb wait-for-device
-          /mnt/android/platform-tools/adb remount
-          
-          # Enable TCP/IP
-          /mnt/android/platform-tools/adb tcpip 5555
-          sleep 5
-          /mnt/android/platform-tools/adb connect 127.0.0.1:5555
-          sleep 2
-          
-          echo ""
-          echo "========================================="
-          echo "   📱 Device Specifications"
-          echo "========================================="
-          echo "Android: 11 (API 30)"
-          echo "RAM: 6GB"
-          echo "Storage: 60GB (on /mnt - NO CLEANUP NEEDED)"
-          echo "CPU: 4 cores (x86_64)"
-          echo "GPU: SwiftShader (software rendering)"
-          echo "Root: ✅ Full Access"
-          echo "System: Writable"
-          echo ""
-          
-          # Verify root
-          echo "🔐 Root Access:"
-          /mnt/android/platform-tools/adb shell "whoami"
-          
-          echo ""
-          echo "💾 Storage Available:"
-          /mnt/android/platform-tools/adb -s 127.0.0.1:5555 shell df -h /data | grep -v Filesystem || echo "Storage check pending..."
-          
-          echo ""
-          echo "🧠 Memory:"
-          /mnt/android/platform-tools/adb -s 127.0.0.1:5555 shell cat /proc/meminfo | grep MemTotal || echo "Memory check pending..."
-          
-          echo ""
-          echo "========================================="
-          echo "   🌐 CONNECTION INFO"
-          echo "========================================="
-          echo ""
-          echo "📱 Connect from your device:"
-          echo "   • IP: 159.195.6.61"
-          echo "   • Port: 5555"
-          echo "   • Protocol: KCP (Low Latency)"
-          echo ""
-          echo "💻 ADB Commands:"
-          echo "   adb connect 159.195.6.61:5555"
-          echo "   adb devices"
-          echo "   adb root (already enabled)"
-          echo "   adb shell (root shell access)"
-          echo "   adb install app.apk"
-          echo ""
-          echo "📦 Install Apps:"
-          echo "   • Download APKs from browser"
-          echo "   • Install Aurora Store manually"
-          echo "   • Use adb install command"
-          echo ""
-          echo "========================================="
-          echo "VPS: 159.195.6.61:5555"
-          echo "Protocol: KCP (UDP) - 30-40% Lower Latency"
-          echo "Android: 11 | RAM: 6GB | Storage: 60GB (/mnt)"
-          echo "Root: ✅ FULL ACCESS"
-          echo "Performance: 🚀 MAXIMUM"
-          echo "========================================="
-          echo ""
-          
-          ./monitor.sh ${{ github.event.inputs.duration }}
+            adb shell whoami
+            adb -s 127.0.0.1:5555 shell df -h /data | head -2
+            
+            echo ""
+            echo "========================================="
+            echo "   🌐 CONNECTION"
+            echo "========================================="
+            echo ""
+            echo "📱 VPS: 159.195.6.61:5555"
+            echo "💻 adb connect 159.195.6.61:5555"
+            echo ""
+            echo "========================================="
+            echo ""
+            
+            # Keep alive loop
+            DURATION=${{ github.event.inputs.duration }}
+            DURATION_SEC=$((DURATION * 3600))
+            START=$(date +%s)
+            
+            while true; do
+              NOW=$(date +%s)
+              ELAPSED=$((NOW - START))
+              
+              if [ $ELAPSED -ge $DURATION_SEC ]; then
+                echo "✅ Session ended"
+                break
+              fi
+              
+              REMAINING=$((DURATION_SEC - ELAPSED))
+              HOURS=$((REMAINING / 3600))
+              MINS=$(((REMAINING % 3600) / 60))
+              
+              echo "[$(date '+%H:%M:%S')] ⏳ ${HOURS}h ${MINS}m | $(adb devices | grep 5555 | wc -l) device(s) connected"
+              
+              sleep 300
+            done
 
       - name: Upload Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rooted-avd-logs-${{ github.run_number }}
-          path: |
-            frpc.log
-            frpc.toml
-            /tmp/emulator.log
+          name: avd-logs
+          path: frpc.log
           retention-days: 7
